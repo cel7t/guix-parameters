@@ -1,0 +1,89 @@
+#+TITLE:An Introduction to Parameterized Packages
+#+DATE: 2023-05-09 2:40
+#+TAGS: Guix, GSoC, Scheme
+#+HAUNT_BASE_DIR: /home/$USER/Documents/Code/Guile/blog
+
+I will be working on bringing Parameterized Packages to [[https://guix.gnu.org][GNU Guix]] this summer as a part of the [[https://summerofcode.withgoogle.com/][Google Summer of Code]] program under the mentorship of Pjotr Prins and Gábor Boskovits.
+This post will go over the basic ideas behind Parameterized Packages, their benefits and how I am planning on implementing them.
+* What are Parameterized Packages?
+Parameterized packages will provide users with a simple way to configure many aspects of packages, à la Gentoo USE flags.
+
+GNU Guix is the only GNU/Linux distribution capable of achieving a [[https://guix.gnu.org/en/blog/2023/the-full-source-bootstrap-building-from-source-all-the-way-down/][full-source bootstrap]], and this comes with many unique advantages.
+Every package in Guix can be built from source, and as a result it is possible to configure a wide variety of options for each package that just aren't exposed on binary-based distributions using [[https://guix.gnu.org/manual/en/html_node/Package-Transformation-Options.html][Package Transformations]]. While package transformations are extremely powerful, they require some experience with packaging software for Guix and are generally expected to be used by power users for applications such as [[https://hpc.guix.info][High-Performance Computing]].
+
+Parameterized Packages aim to not only bring the benefits of package transformations to all users, but to also make it possible to globally specify some aspects to include or exclude from packages similar to [[https://wiki.gentoo.org/wiki/USE_flag][Gentoo's USE flags]].
+
+Some of the benefits of Parameterized Packages are:
+1. Significantly smaller binaries
+2. More fine-grained control over the entire system
+3. Access to additional features only accessible through compile-time options
+Among many more.
+* Example Usage
+Here is an example config.scm file with parameters:
+#+BEGIN_SRC scheme
+ (use-modules (gnu parameters))
+ 
+ (operating-system
+   ;; ...
+   (parameters '(x11 wayland! alsa)))
+#+END_SRC
+In this example, the user wants to build /all/ the packages in the system with support for X11 and alsa, and without Wayland support. 
+Note that all parameter names are lowercase, and that ~!~ indicates the /negation/ of a parameter.
+
+Another possible way of using parameters is through the command-line interface, for example
+#+BEGIN_SRC bash
+  guix build emacs --with-parameter=emacs="png!"
+#+END_SRC
+This will build Emacs *without* PNG support.
+The user interface is very much subject to change, and I would love input from Guix users on the same.
+* Example Usage for Package Maintainers
+Package definitions /with/ parameters will look like this:
+#+BEGIN_SRC scheme
+ (define-public emacs
+   (package
+     (parameters (and
+       (optional jit^ png^ alsa^)
+       (one-of motif gtk^ x11!*)))
+     (parameter-transforms
+       ((x11!)
+        (changes-to-be-made-to-the-package)))))
+#+END_SRC
+The ~^~ indicates that inclusion of a certain parameter is /default/. This is very important as if parameters are not specified or if a package is a dependency of another package without parameters, the /default/ version is used.
+~(optional ...)~ is syntactic sugar for ~(p-or ... #t)~ and ~(one-of ...)~ translates to ~(p-xor ...)~. Note that while ~p-or~ behaves like the regular ~or~ logic gate, it does *not* short circuit.
+The ~(and ...)~ within ~(parameters ...)~ *must* resolve to ~#t~, otherwise the default version of the package will be used.
+When a ~*~ is added to a parameter, it means that a generic transform cannot be used- every build system has /standard/ transforms for parameters, and if your package requires a non-standard transform when the given parameters is used this is what you use to specify that. In the ~(package-transforms ...)~ macro each of these non-standard transforms is specified. Package-transforms can also contain specific cases like ~(and x11! alsa)~ if the transforms for both do not compose.
+
+Alternatively, the following arguably simpler syntax may be employed:
+#+BEGIN_SRC scheme
+ (define-public emacs
+   (package
+     (let-parameters
+       (and
+         (optional jit^ png^ alsa^)
+         (one-of motif gtk^ x11!))
+       (p-if (not jit)
+         [(some-code-for-the-no-jit-version)]
+         [(same-code-for-the-jit-version)])
+       ;; more package definition code ...
+       (p-case
+         [(motif gtk)
+          (code-for-motif-and-gtk-version)]
+         [(x11!)
+          (code-for-motif-version)]
+         [else
+          (some-default-code)]))))
+ #+END_SRC
+This has the benefit of seamlessly being integrated into existing code. Not that the else clauses in ~p-if~ and ~p-case~ are optional. There will be a few more constructs like these ones, for example ~p-cond~. I will be adding more based on community feedback.
+* What if a package record does not contain the parameter value?
+In the instance that parameter values are not specified, the package will be used in its default state by all of the packages depending on it. /In general,/ parameters propogate to dependencies if a valid configuration can be acheived with them, and if this is not possible the default state of the package is used. This will help with the gradual adoption of package parameters, as not every package will have to specify parameters and at the same time the packages specifying parameters will be able to use them even if their dependencies do not have the given parameter.
+
+
+One awesome feature of this arrangement is that a user could have two packages with conflicting parameters but they would both work on the system thanks to Guix building both versions of dependencies. This would *not* work on imperative package managers with similar functionality. For example if a music player application depends on mpd built with pulseaudio while another depends on it built with jack, Guix will create two versions of mpd, one built with each so that both of these packages may coexist.
+* More on parameter symbols
+/Fairly generic/ options such as x11, gcc or en_us (locale) will be accepted as parameters, and all of them will have to be /lowercase/ without exception. Parameters, along with their converses, will have pre-defined /standard transforms/ for every build system they are valid for. Note that having too many parameters in a given package will lead to combinatorial explosion of states, and thus it is best to limit the number of parameters to a manageable amount. I will be attempting to add 10~20 such parameter symbols after finishing this project.
+
+Users will be able to specify per-user global package parameters by creating a file at ~~/.config/guix/parameters.scm~ containing the parameter symbols that all their packages will be built with. Syntax could also be created to allow for per-package fine-tuning of parameters in this file.
+* Conclusion
+Parameterized Packages have the potential to add more functionality to GNU Guix for all users, however they will require the *feedback* and support of the entire Guix community. I would immensely appreciate any kind of suggestions and comments in the new thread on Parameterized Packages which can be found in the mailing list, especially suggestions on what parameter symbols users would like to use.
+
+Happy Hacking!

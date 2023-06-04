@@ -1,0 +1,5 @@
+#+TITLE:Wishlist
+#+TAGS: parameter(p) feature(f)
+* architecture parameters (RISC-V, ARM, amd64)                    :parameter:
+* gcc optimization parameters (-ffast-math, -O2, etc)             :parameter:
+* smaller binaries                                                  :feature:

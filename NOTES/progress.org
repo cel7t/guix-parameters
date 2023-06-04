@@ -1,0 +1,7 @@
+#+TITLE:Progress Log
+* -1/-1
+** Created this repository
+** Initial blog entry on parameterized packages and progress.org, todo.org and wishlist.org
+** Applied Ludo's patch to a recent version of the code
+The patch was failing so I had to manually apply it.
+** Added draft parameter parsers to DRAFTS
