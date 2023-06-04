@@ -7,3 +7,9 @@ The patch was failing so I had to manually apply it.
 ** Added draft parameter parsers to DRAFTS
 * 6/4
 ** GUIX repository got deleted while trying to commit, re-applied the patch and made a backup
+** s/enabled/on/g s/disabled/off/g
+** Created p/os-parameters and p/os-parameters-overriding!
+** Added a parameters section to OS record, needs some more work
+** Added required-off for packages with hard parameter disagreements
+Example: an x86 package that absolutely cannot run on ARM
+This feature will mostly be used for signaling errors
