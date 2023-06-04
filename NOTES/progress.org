@@ -5,3 +5,5 @@
 ** Applied Ludo's patch to a recent version of the code
 The patch was failing so I had to manually apply it.
 ** Added draft parameter parsers to DRAFTS
+* 6/4
+** GUIX repository got deleted while trying to commit, re-applied the patch and made a backup

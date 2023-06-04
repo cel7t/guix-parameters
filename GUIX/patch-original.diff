@@ -1,5 +1,3 @@
-* guix/ui.scm (package->recutils): Add "parameters" recutils field.
----
  guix/ui.scm | 5 +++++
  1 file changed, 5 insertions(+)
 
@@ -376,3 +374,5 @@ index 30142dd059..0f83eb470d 100644
                    (parser 'with-c-toolchain))
            (option '("with-debug-info") #t #f
 -- 
+2.29.2
+

@@ -63,6 +63,7 @@
                 #:hide (package-name->name+version
                         ;; Avoid "overrides core binding" warning.
                         delete))
+  #:autoload   (guix parameters) (package-parameters package-parameter-name) ; g23
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9 gnu)
   #:use-module (srfi srfi-11)
@@ -1584,7 +1585,12 @@ that may return a colorized version of its argument."
     (outputs                            ; multiple outputs
      (format port "outputs:~%~{~a~%~}"
              (map (cut output->recutils p <>) (package-outputs/out-last p)))))
-
+   ;; {g23
+  (match (package-parameters p)
+    (() #t)
+    (lst (format port "parameters:~{ ~a~}~%"
+                 (map package-parameter-name lst))))
+   ;; }
   (format port "systems: ~a~%"
           (split-lines (string-join (package-transitive-supported-systems p))
                        (string-length "systems: ")))

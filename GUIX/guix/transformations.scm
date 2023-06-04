@@ -28,6 +28,7 @@
   #:use-module (guix diagnostics)
   #:autoload   (guix download) (download-to-store)
   #:autoload   (guix git-download) (git-reference? git-reference-url)
+  #:autoload   (guix parameters) (set-package-parameter-value) ; g23
   #:autoload   (guix git) (git-checkout git-checkout? git-checkout-url)
   #:autoload   (guix upstream) (package-latest-release
                                 upstream-source-version
@@ -350,6 +351,43 @@ a checkout of the Git repository at the given URL."
     (if (package? obj)
         (rewrite obj)
         obj)))
+
+;; {g23
+(define (evaluate-parameter-specs specs proc)
+  "Parse SPECS, a list of strings like \"bitlbee=purple=true\", and return a
+list of spec/procedure pairs, where (PROC PACKAGE PARAMETER VALUE) is called
+to return the replacement package.  Raise an error if an element of SPECS uses
+invalid syntax, or if a package it refers to could not be found."
+  (map (lambda (spec)
+         (match (string-tokenize spec %not-equal)
+           ((spec name value)
+            (define (replace old)
+              (proc old name value))
+
+            (cons spec replace))
+           (_
+            (raise
+             (formatted-message
+              (G_ "invalid package parameter specification: ~s")
+              spec)))))
+       specs))
+
+(define (transform-package-parameters replacement-specs)
+  "Return a procedure that, when passed a package, replaces its direct
+dependencies according to REPLACEMENT-SPECS.  REPLACEMENT-SPECS is a list of
+strings like \"guile-next=stable-3.0\" meaning that packages are built using
+'guile-next' from the latest commit on its 'stable-3.0' branch."
+  (define (replace old name value)
+    (set-package-parameter-value old name value))
+
+  (let* ((replacements (evaluate-parameter-specs replacement-specs
+                                                 replace))
+         (rewrite      (package-input-rewriting/spec replacements)))
+    (lambda (obj)
+      (if (package? obj)
+          (rewrite obj)
+          obj))))
+;; }
 
 (define (package-dependents/spec top bottom)
   "Return the list of dependents of BOTTOM, a spec string, that are also
@@ -882,6 +920,7 @@ are replaced by the specified upstream version."
     (with-branch . ,transform-package-source-branch)
     (with-commit . ,transform-package-source-commit)
     (with-git-url . ,transform-package-source-git-url)
+    (with-parameter . ,transform-package-parameters) ; g23
     (with-c-toolchain . ,transform-package-toolchain)
     (tune . ,transform-package-tuning)
     (with-debug-info . ,transform-package-with-debug-info)
@@ -929,6 +968,8 @@ For example, (transformation-option-key? 'with-input) => #t."
                   (parser 'with-commit))
           (option '("with-git-url") #t #f
                   (parser 'with-git-url))
+          (option '("with-parameter") #t #f ; g23
+                  (parser 'with-parameter)) ; g23
           (option '("with-c-toolchain") #t #f
                   (parser 'with-c-toolchain))
           (option '("tune") #f #t
