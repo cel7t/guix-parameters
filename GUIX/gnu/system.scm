@@ -15,6 +15,7 @@
 ;;; Copyright © 2021 Maxime Devos <maximedevos@telenet.be>
 ;;; Copyright © 2021 raid5atemyhomework <raid5atemyhomework@protonmail.com>
 ;;; Copyright © 2023 Bruno Victal <mirai@makinata.eu>
+;;; Copyright © 2023 Sarthak Shah <shahsarthakw@gmail.com> ; g23
 ;;;
 ;;; This file is part of GNU Guix.
 ;;;
@@ -39,6 +40,7 @@
   #:use-module (guix gexp)
   #:use-module (guix records)
   #:use-module (guix packages)
+  #:use-module (guix parameters) ; g23
   #:use-module (guix deprecation)
   #:use-module (guix derivations)
   #:use-module (guix profiles)
@@ -97,6 +99,7 @@
             operating-system-default-essential-services
             operating-system-user-services
             operating-system-packages
+            operating-system-parameters ; g23
             operating-system-host-name
             operating-system-hosts-file ;deprecated
             operating-system-hurd
@@ -174,6 +177,7 @@
             %root-account
             %setuid-programs
             %sudoers-specification
+            %base-parameters ; g23
             %base-packages
             %base-packages-artwork
             %base-packages-interactive
@@ -271,6 +275,11 @@ VERSION is the target version of the boot-parameters record."
   (issue operating-system-issue                   ; string
          (default %default-issue))
 
+  ;; {g23
+  (parameters operating-system-parameters         ; list of ON and OFF parameters
+              (default %base-parameters))
+  ;; }
+  
   (packages operating-system-packages             ; list of (PACKAGE OUTPUT...)
             (default %base-packages))             ; or just PACKAGE
 
@@ -877,6 +886,12 @@ of PROVENANCE-SERVICE-TYPE to its services."
   ;; Firmware usable by default.
   (list ath9k-htc-firmware
         openfwwf-firmware))
+
+;; {g23
+(define %base-parameters
+  '((on tests)
+    (off)))
+;; }
 
 (define %base-packages-artwork
   ;; Default set of artwork packages.
