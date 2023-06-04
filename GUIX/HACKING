@@ -1,0 +1,20 @@
+-*- mode: org; coding: utf-8; -*-
+
+#+TITLE: Hacking GNU Guix and Its Incredible Distro
+
+Copyright © 2012, 2013, 2014, 2016, 2017, 2019 Ludovic Courtès <ludo@gnu.org>
+Copyright © 2015, 2017 Mathieu Lirzin <mthl@gnu.org>
+Copyright © 2017 Leo Famulari <leo@famulari.name>
+Copyright © 2017 Arun Isaac <arunisaac@systemreboot.net>
+
+  Copying and distribution of this file, with or without modification,
+  are permitted in any medium without royalty provided the copyright
+  notice and this notice are preserved.
+
+* Contributing
+
+See the manual for useful hacking information, either by running
+
+  info -f doc/guix.info "Contributing"
+
+or by checking the [[https://guix.gnu.org/manual/devel/en/html_node/Contributing.html][web copy of the manual]].

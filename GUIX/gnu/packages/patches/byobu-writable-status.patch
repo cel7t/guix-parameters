@@ -1,0 +1,13 @@
+Skeleton status files are installed read-only.  When copying to the config dir
+upon initialization, make sure they end up writable.
+
+--- byobu-5.127/usr/bin/byobu-janitor.in
++++ byobu-5.127/usr/bin/byobu-janitor.in
+@@ -82,6 +82,7 @@
+ 	if [ ! -r "$BYOBU_CONFIG_DIR/$f" ]; then
+ 		# Copy from skeleton, if possible
+ 		cp -f "$BYOBU_PREFIX/share/$PKG/status/$f" "$BYOBU_CONFIG_DIR/$f"
++		chmod +w "$BYOBU_CONFIG_DIR/$f"
+ 	fi
+ done
+ 

@@ -1,0 +1,53 @@
+A big thanks to Eelco Dolstra, who designed and implemented Nix.
+Transposing functional programming discipline to package management
+proved to be inspiring and fruitful.
+
+Thanks to the following people who contributed to GNU Guix through
+suggestions, bug reports, patches, internationalization, or general
+infrastructure help:
+
+	    Lluís Batlle i Rossell <viric@viric.name>
+          Sylvain Beucler <beuc@beuc.net>
+	   Carlos Carleos <carleos@uniovi.es>
+	   Felipe Castro <fefcas@gmail.com>
+	   Daniel Clark <dclark@pobox.com>
+	Alexandru Cojocaru <xojoc@gmx.com>
+	    Aleix Conchillo Flaqué <aconchillo@gmail.com>
+          Malcolm Cook <MEC@stowers.org>
+           Thomas Danckaert <thomas.danckaert@gmail.com>
+	   Rafael Ferreira <rafael.f.f1@gmail.com>
+	Christian Grothoff <christian@grothoff.org>
+             Eric Hanchrow <eric.hanchrow@gmail.com>
+           Konrad Hinsen <konrad.hinsen@fastmail.net>
+          Brandon Invergo <brandon@gnu.org>
+           Anders Jonsson <anders.jonsson@norsjovallen.se>
+	  Jeffrin Jose <ahiliation@yahoo.co.in>
+	          Kete <kete@ninthfloor.org>
+           Daniel Kochmański <dkochmanski@hellsgate.pl>
+	  Matthew Lien <bluet@bluet.org>
+             Dave Love <fx@gnu.org>
+            Chris Marusich <cmmarusich@gmail.com>
+            Niels Möller <nisse@lysator.liu.se>
+          Cyprien Nicolas <cyprien@nicolas.tf>
+	   Yutaka Niibe <gniibe@fsij.org>
+           Andrei Osipov <andrspv@gmail.com>
+                  Petter <petter@mykolab.ch>
+             Adam Pribyl <pribyl@lowlevel.cz>
+            Pjotr Prins <pjotr.public12@thebird.nl>
+  Yakkala Yagnesh Raghava <hi@yagnesh.org>
+           Joshua Randall <jcrandall@alum.mit.edu>
+      Bruno Félix Rezende Ribeiro <oitofelix@gnu.org>
+	    Benno Schulenberg <coordinator@translationproject.org>
+           Thomas Schwinge <thomas@codesourcery.com>
+        Alexander Shendi <Alexander.Shendi@web.de>
+	     Alen Skondro <askondro@gmail.com>
+              Jan Synáček <jan.synacek@gmail.com>
+	 Matthias Wachs <wachs@net.in.tum.de>
+        Christine Lemmer-Webber <cwebber@dustycloud.org>
+           Philip Woods <elzairthesorcerer@gmail.com>
+
+GNU Guix also includes non-software works.  Thanks to the following
+people who contributed the logo and general artwork and themes:
+
+           Nikita Karetnikov <nikita@karetnikov.org>
+           Felipe López <felipe.lopez@openmailbox.org>

@@ -1,0 +1,30 @@
+# Makefile variables for PO directory in any package using GNU gettext.
+
+# This domain contains only translations of package synopses and descriptions.
+DOMAIN = guix-packages
+
+subdir = po/packages
+top_builddir = ../..
+
+# These options get passed to xgettext.  We want to catch exclusively package
+# synopses and descriptions.
+XGETTEXT_OPTIONS =				\
+  --language=Scheme --from-code=UTF-8		\
+  --keyword=synopsis --keyword=description      \
+  --keyword=output-synopsis:2
+
+COPYRIGHT_HOLDER = the authors of Guix (msgids)
+
+MSGID_BUGS_ADDRESS = bug-guix@gnu.org
+
+EXTRA_LOCALE_CATEGORIES =
+
+# Disable PO update upon "make dist", which sometimes fails when doing
+# "make distcheck -j4".
+# See <https://lists.gnu.org/archive/html/bug-gettext/2014-08/msg00005.html>.
+DIST_DEPENDS_ON_UPDATE_PO = no
+
+# Ignore the timestamp of the .pot file, as .po files are updated by
+# `make download-po` only. This ensures po files are not modified on the
+# first `make` invocation.
+PO_DEPENDS_ON_POT = no

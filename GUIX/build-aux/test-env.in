@@ -1,0 +1,159 @@
+#!/bin/sh
+
+# GNU Guix --- Functional package management for GNU
+# Copyright © 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2021 Ludovic Courtès <ludo@gnu.org>
+#
+# This file is part of GNU Guix.
+#
+# GNU Guix is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or (at
+# your option) any later version.
+#
+# GNU Guix is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with GNU Guix.  If not, see <http://www.gnu.org/licenses/>.
+
+# Usage: ./test-env COMMAND ARG...
+#
+# Run the daemon in the build directory, and run COMMAND within
+# `pre-inst-env'.  This is used to run unit tests with the just-built
+# daemon, unless `--disable-daemon' was passed at configure time.
+
+
+# Make sure 'cd' behaves deterministically and doesn't write anything to
+# stdout.
+unset CDPATH
+
+case "$1" in
+    --quiet-stderr)
+	# Silence the daemon's output, which is often useless, as well as that
+	# of Bash (such as "Terminated" messages when 'guix-daemon' is
+	# killed.)
+	exec 2> /dev/null
+	shift
+	;;
+esac
+
+if [ -x "@abs_top_builddir@/guix-daemon" ]
+then
+    NIX_STORE_DIR="@GUIX_TEST_ROOT@/store"
+
+    # Do that because store.scm calls `canonicalize-path' on it.
+    mkdir -p "$NIX_STORE_DIR"
+
+    # Canonicalize the store directory name in an attempt to avoid symlinks in
+    # it or its parent directories.  See <http://bugs.gnu.org/17935>.
+    NIX_STORE_DIR="`cd "@GUIX_TEST_ROOT@/store"; pwd -P`"
+
+    GUIX_LOG_DIRECTORY="@GUIX_TEST_ROOT@/var/log/guix"
+    GUIX_DATABASE_DIRECTORY="@GUIX_TEST_ROOT@/db"
+
+    # Choose a PID-dependent name to allow for parallel builds.  Note
+    # that the directory name must be chosen so that the socket's file
+    # name is less than 108-char long (the size of `sun_path' in glibc).
+    # Currently, in Nix builds, we're at ~106 chars...
+    GUIX_STATE_DIRECTORY="@GUIX_TEST_ROOT@/var/$$"
+
+    # We can't exit when we reach the limit, because perhaps the test doesn't
+    # actually rely on the daemon, but at least warn.
+    if test "`echo -n "$GUIX_STATE_DIRECTORY/daemon-socket/socket" | wc -c`" -ge 108
+    then
+	echo "warning: exceeding socket file name limit; test may fail!" >&2
+    fi
+
+    # The configuration directory, for import/export signing keys.
+    GUIX_CONFIGURATION_DIRECTORY="@GUIX_TEST_ROOT@/etc"
+    if [ ! -d "$GUIX_CONFIGURATION_DIRECTORY" ]
+    then
+	# Copy the keys so that the secret key has the right permissions (the
+	# daemon errors out when this is not the case.)
+	mkdir -p "$GUIX_CONFIGURATION_DIRECTORY"
+	cp "@abs_top_srcdir@/tests/keys/signing-key.sec"	\
+	   "@abs_top_srcdir@/tests/keys/signing-key.pub"	\
+	   "$GUIX_CONFIGURATION_DIRECTORY"
+	chmod 400 "$GUIX_CONFIGURATION_DIRECTORY/signing-key.sec"
+    fi
+
+    # A place to store data of the substituter.
+    GUIX_BINARY_SUBSTITUTE_URL="file://$GUIX_STATE_DIRECTORY/substituter-data"
+    rm -rf "$GUIX_STATE_DIRECTORY/substituter-data"
+    mkdir -p "$GUIX_STATE_DIRECTORY/substituter-data"
+
+    # For a number of tests, we want to allow unsigned narinfos, for
+    # simplicity.
+    GUIX_ALLOW_UNAUTHENTICATED_SUBSTITUTES=yes
+
+    # Place for the substituter's cache.
+    XDG_CACHE_HOME="$GUIX_STATE_DIRECTORY/cache-$$"
+
+    export NIX_IGNORE_SYMLINK_STORE NIX_STORE_DIR		\
+	GUIX_LOG_DIRECTORY GUIX_STATE_DIRECTORY GUIX_DATABASE_DIRECTORY	\
+	GUIX_BINARY_SUBSTITUTE_URL				\
+        GUIX_ALLOW_UNAUTHENTICATED_SUBSTITUTES			\
+        GUIX_CONFIGURATION_DIRECTORY XDG_CACHE_HOME
+
+    # Launch the daemon without chroot support because is may be
+    # unavailable, for instance if we're not running as root.
+    "@abs_top_builddir@/pre-inst-env"				\
+	"@abs_top_builddir@/guix-daemon" --disable-chroot	\
+	--substitute-urls="$GUIX_BINARY_SUBSTITUTE_URL" &
+
+    daemon_pid=$!
+    trap "kill $daemon_pid ; rm -rf $GUIX_STATE_DIRECTORY" EXIT
+
+    # The test suite expects the 'guile-bootstrap' package to be available.
+    # Normally the Guile bootstrap tarball is downloaded by a fixed-output
+    # derivation but when network access is missing we allow users to drop
+    # the tarball in 'gnu/packages/bootstrap/SYSTEM' and "intern" it here.
+    bootstrap_directory="@abs_top_builddir@/gnu/packages/bootstrap/@guix_system@"
+    if [ -d "$bootstrap_directory" ]
+    then
+	# Make sure 'guix-daemon' is listening before invoking 'guix
+	# download'.
+	"@abs_top_builddir@/pre-inst-env" "@GUILE@" -c \
+	     '(use-modules (guix))
+(let loop ((i 10))
+  (catch #t
+    (lambda () (open-connection))
+    (lambda (key . args)
+      (if (zero? i)
+          (apply throw key args)
+          (begin (usleep 500000) (loop (- i 1)))))))'
+
+	for file in "$bootstrap_directory"/guile-*
+	do
+	    [ -f "$file" ] &&					\
+	    "@abs_top_builddir@/pre-inst-env"			\
+		guix download "file://$file" > /dev/null
+	done
+    fi
+fi
+
+# Avoid issues that could stem from l10n, such as language/encoding
+# mismatches.
+unset LANGUAGE
+LC_MESSAGES=C
+export LC_MESSAGES
+
+# Disable grafts by default because they can cause things to be built
+# regardless of '--dry-run'.
+GUIX_BUILD_OPTIONS="--no-grafts"
+export GUIX_BUILD_OPTIONS
+
+# Ignore user settings.
+unset GUIX_PACKAGE_PATH
+
+storedir="@storedir@"
+prefix="@prefix@"
+datarootdir="@datarootdir@"
+datadir="@datadir@"
+localstatedir="@localstatedir@"
+export storedir prefix datarootdir datadir localstatedir
+
+"@abs_top_builddir@/pre-inst-env" "$@"
+exit $?

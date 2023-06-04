@@ -1,0 +1,143 @@
+dnl -*- Autoconf -*- fragment for the C++ daemon.
+
+AC_MSG_CHECKING([whether to build daemon])
+AC_MSG_RESULT([$guix_build_daemon])
+
+dnl C++ environment.  This macro must be used unconditionnaly.
+AC_PROG_CXX
+AM_PROG_AR
+AC_LANG([C++])
+
+if test "x$guix_build_daemon" = "xyes"; then
+
+  GUIX_ASSERT_CXX11
+
+  AC_PROG_RANLIB
+  AC_CONFIG_HEADERS([nix/config.h])
+
+  dnl Use 64-bit file system calls so that we can support files > 2 GiB.
+  AC_SYS_LARGEFILE
+
+  dnl Look for zlib, a required dependency.
+  AC_CHECK_LIB([z], [gzdopen], [true],
+    [AC_MSG_ERROR([Guix requires zlib.  See http://www.zlib.net/.])])
+  AC_CHECK_HEADERS([zlib.h], [true],
+    [AC_MSG_ERROR([Guix requires zlib.  See http://www.zlib.net/.])])
+
+  dnl Look for libbz2, an optional dependency.
+  AC_CHECK_LIB([bz2], [BZ2_bzWriteOpen], [HAVE_LIBBZ2=yes], [HAVE_LIBBZ2=no])
+  if test "x$HAVE_LIBBZ2" = xyes; then
+    AC_CHECK_HEADERS([bzlib.h])
+    HAVE_LIBBZ2="$ac_cv_header_bzlib_h"
+  fi
+
+  dnl Look for SQLite, a required dependency.
+  PKG_CHECK_MODULES([SQLITE3], [sqlite3 >= 3.6.19])
+
+  AC_DEFINE_UNQUOTED([SYSTEM], ["$guix_system"],
+    [Guix host system type--i.e., platform and OS kernel tuple.])
+
+  case "$LIBGCRYPT_PREFIX" in
+    no)
+      LIBGCRYPT_CFLAGS=""
+      ;;
+    *)
+      LIBGCRYPT_CFLAGS="-I$LIBGCRYPT_PREFIX/include"
+      ;;
+  esac
+
+  case "$LIBGCRYPT_LIBDIR" in
+    no | "")
+      LIBGCRYPT_LIBS="-lgcrypt"
+      ;;
+    *)
+      LIBGCRYPT_LIBS="-L$LIBGCRYPT_LIBDIR -lgcrypt"
+      ;;
+  esac
+
+  AC_SUBST([LIBGCRYPT_CFLAGS])
+  AC_SUBST([LIBGCRYPT_LIBS])
+
+  save_CFLAGS="$CFLAGS"
+  save_LDFLAGS="$LDFLAGS"
+  CFLAGS="$CFLAGS $LIBGCRYPT_CFLAGS"
+  LDFLAGS="$LDFLAGS $LIBGCRYPT_LDFLAGS"
+
+  have_gcrypt=yes
+  AC_CHECK_LIB([gcrypt], [gcry_md_open], [:], [have_gcrypt=no])
+  AC_CHECK_HEADER([gcrypt.h], [:], [have_gcrypt=no])
+  if test "x$have_gcrypt" != "xyes"; then
+    AC_MSG_ERROR([GNU libgcrypt not found; please install it.])
+  fi
+
+  CFLAGS="$save_CFLAGS"
+  LDFLAGS="$save_LDFLAGS"
+
+  dnl Chroot support.
+  AC_CHECK_FUNCS([chroot unshare])
+  AC_CHECK_HEADERS([sched.h sys/param.h sys/mount.h sys/syscall.h])
+
+  if test "x$ac_cv_func_chroot" != "xyes"; then
+    AC_MSG_ERROR(['chroot' function missing, bailing out])
+  fi
+
+  dnl lutimes and lchown: used when canonicalizing store items.
+  dnl posix_fallocate: used when extracting archives.
+  dnl vfork: to speed up spawning of helper programs.
+  dnl   `--> now disabled because of unpredictable behavior:
+  dnl        see <http://lists.gnu.org/archive/html/guix-devel/2014-05/msg00036.html>
+  dnl        and Nix commit f794465c (Nov. 2012).
+  dnl sched_setaffinity: to improve RPC locality.
+  dnl statvfs: to detect disk-full conditions.
+  dnl strsignal: for error reporting.
+  dnl statx: fine-grain 'stat' call, new in glibc 2.28.
+  AC_CHECK_FUNCS([lutimes lchown posix_fallocate sched_setaffinity \
+     statvfs nanosleep strsignal statx])
+
+  dnl Check for <locale>.
+  AC_LANG_PUSH(C++)
+  AC_CHECK_HEADERS([locale])
+  AC_LANG_POP(C++)
+
+
+  dnl Check whether we have the `personality' syscall, which allows us
+  dnl to do i686-linux builds on x86_64-linux machines.
+  AC_CHECK_HEADERS([sys/personality.h])
+
+  dnl Determine the appropriate default list of substitute URLs (GnuTLS
+  dnl is required so we can default to 'https'.)
+  guix_substitute_urls="https://ci.guix.gnu.org https://bordeaux.guix.gnu.org"
+
+  AC_MSG_CHECKING([for default substitute URLs])
+  AC_MSG_RESULT([$guix_substitute_urls])
+
+  AC_DEFINE_UNQUOTED([GUIX_SUBSTITUTE_URLS], ["$guix_substitute_urls"],
+    [Default list of substitute URLs used by 'guix-daemon'.])
+
+  dnl Check for Guile-SSH, which is required by 'guix offload'.
+  GUIX_CHECK_GUILE_SSH
+
+  case "x$guix_cv_have_recent_guile_ssh" in
+    xyes)
+      guix_build_daemon_offload="yes"
+      AC_DEFINE([HAVE_DAEMON_OFFLOAD_HOOK], [1],
+	[Define if the daemon's 'offload' build hook is being built (requires Guile-SSH).])
+      ;;
+    *)
+      guix_build_daemon_offload="no"
+      ;;
+  esac
+
+  dnl Temporary directory used to store the daemon's data.
+  GUIX_TEST_ROOT_DIRECTORY
+  GUIX_TEST_ROOT="$ac_cv_guix_test_root"
+  AC_SUBST([GUIX_TEST_ROOT])
+
+  GUIX_CHECK_LOCALSTATEDIR
+fi
+
+AM_CONDITIONAL([HAVE_LIBBZ2], [test "x$HAVE_LIBBZ2" = "xyes"])
+AM_CONDITIONAL([BUILD_DAEMON], [test "x$guix_build_daemon" = "xyes"])
+AM_CONDITIONAL([BUILD_DAEMON_OFFLOAD],			\
+  [test "x$guix_build_daemon" = "xyes"			\
+   && test "x$guix_build_daemon_offload" = "xyes"])

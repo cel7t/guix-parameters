@@ -1,0 +1,9 @@
+GNU Guix consists of Scheme code that implements the deployment model
+of the Nix package management tool.  In fact, it currently talks to a
+build daemon whose code comes from Nix (see the manual for details.)
+
+Nix was initially written by Eelco Dolstra; other people have been
+contributing to it.  See `nix/AUTHORS' for details.
+
+The list of GNU Guix contributors is now generated from the output of
+'git log' and written to this file, as can be seen in release tarballs.

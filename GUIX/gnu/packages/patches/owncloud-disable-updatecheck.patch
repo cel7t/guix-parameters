@@ -1,0 +1,49 @@
+This patch is taken from Debian and modified slightly
+
+Description: Phoning-home version checks should be disabled in Debian packages
+Author: Sandro Knauß <bugs@ssandroknauss.de>
+Origin: debian
+Bug-debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=721341
+Forwarded: not-needed
+Last-Update: 2014-02-17
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/libsync/configfile.cpp
++++ b/src/libsync/configfile.cpp
+@@ -522,11 +522,14 @@ bool ConfigFile::skipUpdateCheck(const Q
+     if (connection.isEmpty())
+         con = defaultConnection();
+ 
+-    QVariant fallback = getValue(skipUpdateCheckC(), con, false);
++    QVariant fallback = getValue(skipUpdateCheckC(), con, true);
+     fallback = getValue(skipUpdateCheckC(), QString(), fallback);
+ 
+     QVariant value = getPolicySetting(skipUpdateCheckC(), fallback);
+-    return value.toBool();
++    if ( !value.toBool() )
++        qDebug() << "Guix has disabled the UpdateCheck mechanism.";
++
++    return true;
+ }
+ 
+ void ConfigFile::setSkipUpdateCheck(bool skip, const QString &connection)
+--- a/src/gui/generalsettings.cpp
++++ b/src/gui/generalsettings.cpp
+@@ -146,6 +149,7 @@ void GeneralSettings::loadMiscSettings()
+ 
+ void GeneralSettings::slotUpdateInfo()
+ {
++    /* Guix doesn't want an autoupdater
+     if (ConfigFile().skipUpdateCheck() || !Updater::instance()) {
+         // updater disabled on compile
+         _ui->updaterWidget->setVisible(false);
+@@ -174,6 +178,9 @@ void GeneralSettings::slotUpdateInfo()
+     _ui->updateChannel->setCurrentIndex(ConfigFile().updateChannel() == "beta" ? 1 : 0);
+     connect(_ui->updateChannel, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+         this, &GeneralSettings::slotUpdateChannelChanged, Qt::UniqueConnection);
++    */
++    //hide the update group box for Guix.
++    _ui->updaterWidget->setVisible(false);
+ }
+ 
+ void GeneralSettings::slotUpdateChannelChanged(int index)

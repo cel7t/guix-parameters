@@ -1,0 +1,50 @@
+#!@abs_top_builddir@/guile \
+--no-auto-compile -e main -s
+!#
+;;; GNU Guix --- Functional package management for GNU
+;;; Copyright © 2013 Mark H Weaver <mhw@netris.org>
+;;; Copyright © 2018 Mathieu Lirzin <mthl@gnu.org>
+;;;
+;;; This file is part of GNU Guix.
+;;;
+;;; GNU Guix is free software; you can redistribute it and/or modify it
+;;; under the terms of the GNU General Public License as published by
+;;; the Free Software Foundation; either version 3 of the License, or (at
+;;; your option) any later version.
+;;;
+;;; GNU Guix is distributed in the hope that it will be useful, but
+;;; WITHOUT ANY WARRANTY; without even the implied warranty of
+;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;;; GNU General Public License for more details.
+;;;
+;;; You should have received a copy of the GNU General Public License
+;;; along with GNU Guix.  If not, see <http://www.gnu.org/licenses/>.
+
+;; IMPORTANT: We must avoid loading any modules from Guix here,
+;; because we need to adjust the guile load paths first.
+;; It's okay to import modules from core Guile though.
+
+(define-syntax-rule (push! elt v) (set! v (cons elt v)))
+
+(define (augment-load-paths!)
+  ;; Add installed modules to load-path.
+  (push! "@guilemoduledir@" %load-path)
+  (push! "@guileobjectdir@" %load-compiled-path))
+
+(define* (main #:optional (args (command-line)))
+  (unless (getenv "GUIX_UNINSTALLED")
+    (augment-load-paths!))
+
+  (let ((guix-main (module-ref (resolve-interface '(guix ui))
+                               'guix-main)))
+    (bindtextdomain "guix" "@localedir@")
+    (bindtextdomain "guix-packages" "@localedir@")
+    ;; XXX: It would be more convenient to change it to:
+    ;;   (exit (apply guix-main (command-line)))
+    ;; but since the 'guix' command is not updated by 'guix pull', we cannot
+    ;; really do it now.
+    (apply guix-main args)))
+
+;;; Local Variables:
+;;; mode: scheme
+;;; End:

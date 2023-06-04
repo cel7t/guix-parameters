@@ -1,0 +1,82 @@
+-*- mode: org; coding: utf-8; -*-
+
+#+TITLE: Tentative GNU Guix Road Map
+
+Copyright © 2012, 2013, 2014, 2015 Ludovic Courtès <ludo@gnu.org>
+
+  Copying and distribution of this file, with or without modification,
+  are permitted in any medium without royalty provided the copyright
+  notice and this notice are preserved.
+
+The goals of the GNU Guix project are two-fold:
+
+  - to build a purely functional package manager, based on Nix and
+    Guile;
+
+  - to use it to build a practical 100% free software distribution of
+    GNU/Linux and possibly other GNU variants, with a focus on the
+    promotion and tight integration of GNU components–the GNU system.
+
+Since its inception, the project has gone a long way towards that goal.  Below
+is a list of items we want for version "1.0" of the Guix System Distribution.
+There will be a few 0.x releases by then to give the new features more
+exposure and testing.
+
+You're welcome to discuss this road map on guix-devel@gnu.org or #guix on
+the Libera Chat IRC network!
+
+* Features scheduled for 1.0
+
+  - larger & more robust build farm
+    + we need a powerful, dedicated front-end
+    + armhf-linux build machine
+    + leave Hydra in favor of 'guix publish' + custom code?
+  - more OS features
+    + LVM support
+    + encrypted root
+    + configurable name service switch
+    + whole-system unit tests, using VMs
+  - more service definitions
+    + mcron, postfix(?), wicd(?), etc.
+  - better 'guix system'
+    + 'reconfigure' should be able to restart non-essential services
+    + support for '--list-generations' and '--delete-generations'
+  - better 'guix pull'
+    + using Git to fetch the source instead of re-downloading everything
+    + build more quickly
+    + install new .mo files and new manual
+    + authentication of the Guix source: use signed commits?
+  - simplified, purely declarative service list in 'operating-system'
+    + it should be possible to inspect the service instance declarations and
+      settings
+  - GUIs
+    + integrate guix-web?
+    + guile-ncurses installer?
+  - 'guix publish'?
+
+* Features for later
+
+  - complete GNU/Hurd port
+  - use content-based addressing when downloading substitutes to reduce
+    bandwidth requirements
+    + design nar v2 format where file contents are replaced by their hashes
+    + leverage /gnu/store/.links
+  - binary origin tracking
+    + keep signatures in sqlite.db
+    + preserve signatures upon import/export
+  - peer-to-peer distribution of updates (GNUnet?)
+  - more deterministic builds
+    + identify & fix sources of non-determinism in builds
+    + strengthen guix-daemon containers to further increase reproducibility
+    + trusting-trust: bootstrap with different tool chains
+    + fixed-point: re-bootstrap until fixed point is reached
+    + distributed validation: compare contents of store items with others
+      * resist a hydra.gnu.org compromise
+  - reproducible containers: mix of 'guix environment' and 'guix system vm'
+  - execute code with least privilege
+    + build containers like guix-daemon does
+    + provide a Plash-like interface in Bash
+  - daemon rewritten in Guile
+  - more shepherd integration
+    + monitor network interfaces and start/stop events based on that
+    + include a DHCP client written in Scheme

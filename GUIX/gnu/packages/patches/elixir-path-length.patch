@@ -1,0 +1,15 @@
+In the package definition the call to the command 'git' is substituted with
+the full path to the git executable. This change causes the mix formatting tool
+to complain that the line is too long. This workaround reformats the file
+after the substitution is made.
+
+--- a/Makefile
++++ b/Makefile
+@@ -265,6 +265,7 @@ format: compile
+	$(call FORMAT)
+ 
+ test_formatted: compile
++	$(call FORMAT,lib/mix/lib/mix/scm/git.ex)
+	$(call FORMAT,--check-formatted)
+ 
+ test_erlang: compile $(TEST_ERLS)
