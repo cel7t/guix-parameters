@@ -1,0 +1,31 @@
+Bash-completion is written with FHS in mind where completion scripts
+all get added to /usr/share/bash-completion/completions and are picked
+up by the dynamic completion loader from there---whether they are
+part of bash-completion or installed by another package.
+
+On Guix systems, we want not only to search within bash-completion's own
+directory, but also in the user's profile and guix home profile, as well
+as in the system profile.
+This is what this patch does.
+
+
+--- a/bash_completion
++++ b/bash_completion
+@@ -2173,7 +2173,15 @@ complete -F _minimal ''
+ 
+ __load_completion()
+ {
+-    local -a dirs=(${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions)
++    local -a dirs=(
++        ${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions
++        "$HOME/.guix-profile/share/bash-completion/completions"
++        "$HOME/.guix-profile/etc/bash_completion.d"
++        "$HOME/.guix-home/profile/share/bash-completion/completions"
++        "$HOME/.guix-home/profile/etc/bash_completion.d"
++        "/run/current-system/profile/share/bash-completion/completions"
++        "/run/current-system/profile/etc/bash_completion.d" )
++
+     local ifs=$IFS IFS=: dir cmd="${1##*/}" compfile
+     [[ -n $cmd ]] || return 1
+     for dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+         dirs+=( $dir/bash-completion/completions )

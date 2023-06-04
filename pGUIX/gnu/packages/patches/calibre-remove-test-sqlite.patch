@@ -1,0 +1,28 @@
+From d8225e83c3b73f0e0da73874910f50ca652f48cf Mon Sep 17 00:00:00 2001
+From: Brendan Tildesley <mail@brendan.scot>
+Date: Thu, 25 Feb 2021 00:48:00 +1100
+Subject: [PATCH] Remove test_sqlite
+
+---
+ src/calibre/test_build.py | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/src/calibre/test_build.py b/src/calibre/test_build.py
+index 0ab7aa0646..87fdfabd9a 100644
+--- a/src/calibre/test_build.py
++++ b/src/calibre/test_build.py
+@@ -273,12 +273,6 @@ def read_changes():
+         m.close()
+         self.assertEqual(winutil.parse_cmdline('"c:\\test exe.exe" "some arg" 2'), ('c:\\test exe.exe', 'some arg', '2'))
+
+-    def test_sqlite(self):
+-        import sqlite3
+-        conn = sqlite3.connect(':memory:')
+-        from calibre.library.sqlite import load_c_extensions
+-        self.assertTrue(load_c_extensions(conn, True), 'Failed to load sqlite extension')
+-
+     def test_apsw(self):
+         import apsw
+         conn = apsw.Connection(':memory:')
+--
+2.30.1

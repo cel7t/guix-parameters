@@ -1,0 +1,32 @@
+Search the "extra libs" in GUIX_KF5INIT_LIB_PATH (which basically is a
+collection of all /lib directories). We can not hard-code the full path to the
+libsKF5Plasam, since adding palse-workspace
+
+Adopted from NixOS
+pkgs/development/libraries/kde-frameworks/kinit/kdeinit-extra_libs.patch
+
+===================================================================
+--- kinit-5.32.0/src/kdeinit/kinit-5.32.0/src/kdeinit/.orig
++++ kinit-5.32.0/src/kdeinit/kinit.cpp
+@@ -96,9 +96,9 @@
+     "libKF5Parts.5.dylib",
+     "libKF5Plasma.5.dylib"
+ #else
+-    "libKF5KIOCore.so.5",
+-    "libKF5Parts.so.5",
+-    "libKF5Plasma.so.5"
++    "GUIX_PKGS_KF5_KIO/lib/libKF5KIOCore.so.5",
++    "GUIX_PKGS_KF5_PARTS/lib/libKF5Parts.so.5",
++    "GUIX_PKGS_KF5_PLASMA/lib/libKF5Plasma.so.5"
+ #endif
+ };
+ #endif
+@@ -1673,7 +1673,7 @@
+ #if defined(Q_OS_UNIX) && !defined(Q_OS_OSX)
+     if (!d.suicide && qEnvironmentVariableIsEmpty("KDE_IS_PRELINKED")) {
+         for (const char *extra_lib : extra_libs) {
+-            const QString extra = findSharedLib(QString::fromLatin1(extra_lib));
++            const QString extra = QString::fromLatin1(extra_lib);
+             if (!extra.isEmpty()) {
+                 QLibrary l(extra);
+                 l.setLoadHints(QLibrary::ExportExternalSymbolsHint);

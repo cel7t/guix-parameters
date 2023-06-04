@@ -1,0 +1,17 @@
+By default 'mutt' embeds configure flags and the output of 'gcc -v',
+which contains the store file name of Bash and GCC.  This patch makes
+sure we don't embed a reference to these in 'mutt'.
+
+diff --git a/txt2c.sh b/txt2c.sh
+index f634bb9..53845cf 100755
+--- a/txt2c.sh
++++ b/txt2c.sh
+@@ -21,6 +21,8 @@ txt2c_fallback () {
+ 	echo ";"
+ }
+ 
++echo "unsigned char $1[] = \"value of '$1' not kept\";"
++exit 0
+ if ./txt2c test </dev/null >/dev/null 2>&1; then
+     ./txt2c "$1"
+ else

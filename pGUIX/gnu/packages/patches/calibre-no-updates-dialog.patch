@@ -1,0 +1,26 @@
+From 19e8d7701c302b0eca4c638705a6db625352caa3 Mon Sep 17 00:00:00 2001
+From: Brendan Tildesley <mail@brendan.scot>
+Date: Thu, 25 Feb 2021 12:17:30 +1100
+Subject: [PATCH] Don't check for updates.
+
+---
+ src/calibre/gui2/main.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/calibre/gui2/main.py b/src/calibre/gui2/main.py
+index 776f8bebfb..4302716d7e 100644
+--- a/src/calibre/gui2/main.py
++++ b/src/calibre/gui2/main.py
+@@ -59,8 +59,8 @@ def option_parser():
+                       help=_('Start minimized to system tray.'))
+     parser.add_option('-v', '--verbose', default=0, action='count',
+                       help=_('Ignored, do not use. Present only for legacy reasons'))
+-    parser.add_option('--no-update-check', default=False, action='store_true',
+-            help=_('Do not check for updates'))
++    parser.add_option('--update-check', dest='no_update_check', default=True, action='store_false',
++            help=_('Check for updates'))
+     parser.add_option('--ignore-plugins', default=False, action='store_true',
+             help=_('Ignore custom plugins, useful if you installed a plugin'
+                 ' that is preventing calibre from starting'))
+--
+2.30.1

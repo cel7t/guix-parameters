@@ -1,0 +1,23 @@
+See <https://phabricator.kde.org/D26818>
+
+diff --git a/src/ksieveui/CMakeLists.txt b/src/ksieveui/CMakeLists.txt
+--- a/src/ksieveui/CMakeLists.txt
++++ b/src/ksieveui/CMakeLists.txt
+@@ -255,6 +255,7 @@ target_link_libraries(KF5KSieveUi
+     KF5::KManageSieve
+     KF5::KSieve
+     KF5::PimCommon
++    KF5::SyntaxHighlighting
+     PRIVATE
+     KF5::Libkdepim
+     KF5::Archive
+@@ -269,7 +270,6 @@ target_link_libraries(KF5KSieveUi
+     KF5::I18n
+     KF5::SonnetUi
+     Qt::PrintSupport
+-    KF5::SyntaxHighlighting
+     )
+
+ set_target_properties(KF5KSieveUi PROPERTIES
+--
+2.33.0

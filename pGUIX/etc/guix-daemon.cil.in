@@ -1,0 +1,478 @@
+; -*- lisp -*-
+;;; GNU Guix --- Functional package management for GNU
+;;; Copyright © 2018, 2022 Ricardo Wurmus <rekado@elephly.net>
+;;; Copyright © 2020 Daniel Brooks <db48x@db48x.net>
+;;; Copyright © 2020 Marius Bakke <marius@gnu.org>
+;;;
+;;; This file is part of GNU Guix.
+;;;
+;;; GNU Guix is free software; you can redistribute it and/or modify it
+;;; under the terms of the GNU General Public License as published by
+;;; the Free Software Foundation; either version 3 of the License, or (at
+;;; your option) any later version.
+;;;
+;;; GNU Guix is distributed in the hope that it will be useful, but
+;;; WITHOUT ANY WARRANTY; without even the implied warranty of
+;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;;; GNU General Public License for more details.
+;;;
+;;; You should have received a copy of the GNU General Public License
+;;; along with GNU Guix.  If not, see <http://www.gnu.org/licenses/>.
+
+;; This is a specification for SELinux 2.7 written in the SELinux Common
+;; Intermediate Language (CIL).  It refers to types that must be defined in
+;; the system's base policy.
+
+;; If you, like me, need advice about fixing an SELinux policy, I recommend
+;; reading https://danwalsh.livejournal.com/55324.html
+
+;; In particular, you can run semanage permissive -a guix_daemon.guix_daemon_t
+;; to allow guix-daemon to do whatever it wants. SELinux will still check its
+;; permissions, and when it doesn't have permission it will still send an
+;; audit message to your system logs. This lets you know what permissions it
+;; ought to have. Use ausearch --raw to find the permissions violations, then
+;; pipe that to audit2allow to generate an updated policy. You'll still need
+;; to translate that policy into CIL in order to update this file, but that's
+;; fairly straight-forward. Annoying, but easy.
+
+(block guix_daemon
+  ;; Require existing types
+  (typeattributeset cil_gen_require domain)
+  (typeattributeset cil_gen_require init_t)
+  (typeattributeset cil_gen_require init_var_run_t)
+  (typeattributeset cil_gen_require nscd_var_run_t)
+  (typeattributeset cil_gen_require system_dbusd_var_run_t)
+  (typeattributeset cil_gen_require tmp_t)
+  (typeattributeset cil_gen_require var_log_t)
+
+  ;; Declare own types
+  (type guix_daemon_t)
+  (roletype object_r guix_daemon_t)
+  (type guix_daemon_conf_t)
+  (roletype object_r guix_daemon_conf_t)
+  (typeattributeset file_type guix_daemon_conf_t)
+  (type guix_daemon_exec_t)
+  (roletype object_r guix_daemon_exec_t)
+  (typeattributeset file_type guix_daemon_exec_t)
+  (type guix_daemon_socket_t)
+  (roletype object_r guix_daemon_socket_t)
+  (typeattributeset file_type guix_daemon_socket_t)
+  (type guix_store_content_t)
+  (roletype object_r guix_store_content_t)
+  (typeattributeset file_type guix_store_content_t)
+  (type guix_profiles_t)
+  (roletype object_r guix_profiles_t)
+  (typeattributeset file_type guix_profiles_t)
+
+  ;; These types are domains, thereby allowing process rules
+  (typeattributeset domain (guix_daemon_t guix_daemon_exec_t))
+
+  (level low (s0))
+
+  ;; When a process in init_t or guix_store_content_t spawns a
+  ;; guix_daemon_exec_t process, let it run in the guix_daemon_t context
+  (typetransition init_t guix_daemon_exec_t
+                  process guix_daemon_t)
+  (typetransition guix_store_content_t guix_daemon_exec_t
+                  process guix_daemon_t)
+
+  (roletype system_r guix_daemon_t)
+
+  ;; allow init_t to read and execute guix files
+  (allow init_t
+         guix_profiles_t
+         (lnk_file (read)))
+  (allow init_t
+         guix_daemon_exec_t
+         (file (execute)))
+  (allow init_t
+         guix_daemon_t
+         (process (transition)))
+  (allow init_t
+         guix_store_content_t
+         (lnk_file (read)))
+  (allow init_t
+         guix_store_content_t
+         (file (open read execute)))
+  (allow init_t
+         guix_profiles_t
+         (dir (setattr)))
+
+  ;; guix-daemon needs to know the names of users
+  (allow guix_daemon_t
+         passwd_file_t
+         (file (getattr open read)))
+
+  ;; Permit communication with NSCD
+  (allow guix_daemon_t
+         nscd_var_run_t
+         (file (map read)))
+  (allow guix_daemon_t
+         nscd_var_run_t
+         (dir (search)))
+  (allow guix_daemon_t
+         nscd_var_run_t
+         (sock_file (write)))
+  (allow guix_daemon_t
+         nscd_t
+         (fd (use)))
+  (allow guix_daemon_t
+         nscd_t
+         (unix_stream_socket (connectto)))
+  (allow guix_daemon_t nscd_t
+         (nscd (getgrp gethost getpwd getserv shmemgrp shmemhost shmempwd shmemserv)))
+
+  ;; permit downloading packages via HTTP(s)
+  (allow guix_daemon_t http_port_t
+         (tcp_socket (name_connect)))
+  (allow guix_daemon_t ftp_port_t
+         (tcp_socket (name_connect)))
+  (allow guix_daemon_t ephemeral_port_t
+         (tcp_socket (name_connect)))
+
+  ;; Permit logging and temp file access
+  (allow guix_daemon_t
+         tmp_t
+         (lnk_file (create rename setattr unlink)))
+  (allow guix_daemon_t
+         tmp_t
+         (file (link
+                rename create execute execute_no_trans write
+                unlink setattr map relabelto relabelfrom)))
+  (allow guix_daemon_t
+         tmp_t
+         (fifo_file (open read write create getattr ioctl setattr unlink)))
+  (allow guix_daemon_t
+         tmp_t
+         (dir (create rename
+               rmdir relabelto relabelfrom reparent
+               add_name remove_name
+               open read write
+               getattr setattr
+               search)))
+  (allow guix_daemon_t
+         tmp_t
+         (sock_file (create getattr setattr unlink write)))
+  (allow guix_daemon_t
+         var_log_t
+         (file (create getattr open write)))
+  (allow guix_daemon_t
+         var_log_t
+         (dir (getattr create write add_name)))
+  (allow guix_daemon_t
+         var_run_t
+         (lnk_file (read)))
+  (allow guix_daemon_t
+         var_run_t
+         (dir (search)))
+
+  ;; Spawning processes, execute helpers
+  (allow guix_daemon_t
+         self
+         (process (fork execmem setrlimit setpgid setsched)))
+  (allow guix_daemon_t
+         guix_daemon_exec_t
+         (file (execute
+                execute_no_trans read write open entrypoint map
+                getattr link unlink)))
+
+  ;; Remounting /gnu/store read-write.
+  (allow guix_daemon_t
+         fs_t
+         (filesystem (remount)))
+
+  ;; TODO: unknown
+  (allow guix_daemon_t
+         root_t
+         (dir (mounton)))
+  (allow guix_daemon_t
+         fs_t
+         (filesystem (getattr)))
+  (allow guix_daemon_conf_t
+         fs_t
+         (filesystem (associate)))
+
+  ;; Build isolation
+  (allow guix_daemon_t
+         guix_store_content_t
+         (file (ioctl mounton)))
+  (allow guix_store_content_t
+         fs_t
+         (filesystem (associate)))
+  (allow guix_daemon_t
+         guix_store_content_t
+         (dir (read mounton)))
+  (allow guix_daemon_t
+         guix_daemon_t
+         (capability (net_admin
+                      fsetid fowner
+                      chown setuid setgid
+                      dac_override dac_read_search
+                      sys_chroot
+                      sys_admin)))
+  (allow guix_daemon_t
+         fs_t
+         (filesystem (unmount)))
+  (allow guix_daemon_t
+         devpts_t
+         (dir (search)))
+  (allow guix_daemon_t
+         devpts_t
+         (filesystem (mount)))
+  (allow guix_daemon_t
+         devpts_t
+         (chr_file (ioctl open read write setattr getattr)))
+  (allow guix_daemon_t
+         tmpfs_t
+         (filesystem (getattr mount)))
+  (allow guix_daemon_t
+         tmpfs_t
+         (file (create open read unlink write)))
+  (allow guix_daemon_t                          ;same as above, but with tmp_t
+         tmp_t
+         (file (create open read unlink write)))
+  (allow guix_daemon_t
+         tmpfs_t
+         (dir (getattr add_name remove_name write)))
+  (allow guix_daemon_t
+         proc_t
+         (file (getattr open read)))
+  (allow guix_daemon_t
+         proc_t
+         (dir (read)))
+  (allow guix_daemon_t
+         proc_t
+         (filesystem (associate mount)))
+  (allow guix_daemon_t
+         null_device_t
+         (chr_file (getattr open read write)))
+  (allow guix_daemon_t
+         kvm_device_t
+         (chr_file (getattr)))
+  (allow guix_daemon_t
+         zero_device_t
+         (chr_file (getattr)))
+  (allow guix_daemon_t
+         urandom_device_t
+         (chr_file (getattr)))
+  (allow guix_daemon_t
+         random_device_t
+         (chr_file (getattr)))
+  (allow guix_daemon_t
+         devtty_t
+         (chr_file (getattr)))
+
+  ;; Access to store items
+  (allow guix_daemon_t
+         guix_store_content_t
+         (dir (reparent
+               create
+               getattr setattr
+               search rename
+               add_name remove_name
+               open write
+               rmdir relabelfrom)))
+  (allow guix_daemon_t
+         guix_store_content_t
+         (file (create
+                lock
+                setattr getattr
+                execute execute_no_trans
+                link unlink
+                map
+                rename
+                append
+                open read write relabelfrom)))
+  (allow guix_daemon_t
+         guix_store_content_t
+         (lnk_file (create
+                    getattr setattr
+                    link unlink
+                    read
+                    rename)))
+  (allow guix_daemon_t
+         guix_store_content_t
+         (fifo_file (create getattr open read unlink write)))
+  (allow guix_daemon_t
+         guix_store_content_t
+         (sock_file (create getattr setattr unlink write)))
+
+  ;; Access to run state directories
+  (allow guix_daemon_t
+         system_dbusd_var_run_t
+         (dir (search)))
+  (allow guix_daemon_t
+         init_var_run_t
+         (dir (search)))
+
+  ;; Access to configuration files and directories
+  (allow guix_daemon_t
+         guix_daemon_conf_t
+         (dir (search create
+               setattr getattr
+               add_name remove_name
+               open read write)))
+  (allow guix_daemon_t
+         guix_daemon_conf_t
+         (file (create rename
+                lock
+                map
+                getattr setattr
+                unlink
+                open read write)))
+  (allow guix_daemon_t
+         guix_daemon_conf_t
+         (lnk_file (create getattr rename unlink read)))
+  (allow guix_daemon_t net_conf_t
+         (file (getattr open read)))
+  (allow guix_daemon_t net_conf_t
+         (lnk_file (read)))
+  (allow guix_daemon_t NetworkManager_var_run_t
+         (dir (search)))
+
+  ;; Access to profiles
+  (allow guix_daemon_t
+         guix_profiles_t
+         (dir (search getattr setattr read write open create add_name)))
+  (allow guix_daemon_t
+         guix_profiles_t
+         (lnk_file (read getattr)))
+
+  ;; Access to profile links in the home directory
+  ;; TODO: allow access to profile links *anywhere* on the filesystem
+  (allow guix_daemon_t
+         user_home_t
+         (lnk_file (read getattr)))
+  (allow guix_daemon_t
+         user_home_t
+         (dir (search)))
+  (allow guix_daemon_t
+         cache_home_t
+         (dir (search)))
+  (allow guix_daemon_t
+         cache_home_t
+         (lnk_file (getattr read)))
+
+  ;; self upgrades
+  (allow guix_daemon_t
+         self
+         (dir (add_name write)))
+  (allow guix_daemon_t
+         self
+         (netlink_route_socket (bind create getattr nlmsg_read read write getopt)))
+
+  ;; Socket operations
+  (allow guix_daemon_t
+         guix_daemon_socket_t
+         (sock_file (unlink write)))
+  (allow guix_daemon_t
+         init_t
+         (fd (use)))
+  (allow guix_daemon_t
+         init_t
+         (unix_stream_socket (write)))
+  (allow guix_daemon_t
+         guix_daemon_conf_t
+         (unix_stream_socket (listen)))
+  (allow guix_daemon_t
+         guix_daemon_conf_t
+         (sock_file (create unlink write)))
+  (allow guix_daemon_t
+         self
+         (unix_stream_socket (create
+                              read write
+                              connect bind accept
+                              getopt setopt)))
+  (allow guix_daemon_t
+         self
+         (tcp_socket (accept listen bind connect create setopt getopt getattr ioctl read write shutdown)))
+  (allow guix_daemon_t
+         unreserved_port_t
+         (tcp_socket (name_bind name_connect accept listen)))
+  (allow guix_daemon_t
+         self
+         (udp_socket (connect getattr bind getopt setopt read write)))
+  (allow guix_daemon_t
+         self
+         (fifo_file (write read)))
+  (allow guix_daemon_t
+         self
+         (udp_socket (ioctl create)))
+  (allow guix_daemon_t
+         self
+         (unix_stream_socket (connectto)))
+  (allow guix_daemon_t
+         self
+         (unix_dgram_socket (create bind connect sendto read write)))
+
+  ;; For some esoteric build jobs (i.e. running PostgreSQL, etc).
+  (allow guix_daemon_t
+         self
+         (capability (kill)))
+  (allow guix_daemon_t
+         node_t
+         (tcp_socket (node_bind)))
+  (allow guix_daemon_t
+         node_t
+         (udp_socket (node_bind)))
+  (allow guix_daemon_t
+         port_t
+         (tcp_socket (name_connect)))
+  (allow guix_daemon_t
+         tmpfs_t
+         (file (map read write link getattr)))
+  (allow guix_daemon_t
+         usermodehelper_t
+         (file (read)))
+  (allow guix_daemon_t
+         hugetlbfs_t
+         (file (map read write)))
+  (allow guix_daemon_t
+         proc_net_t
+         (file (read)))
+  (allow guix_daemon_t
+         postgresql_port_t
+         (tcp_socket (name_connect name_bind)))
+  (allow guix_daemon_t
+         rtp_media_port_t
+         (udp_socket (name_bind)))
+  (allow guix_daemon_t
+         vnc_port_t
+         (tcp_socket (name_bind)))
+
+  ;; I guess sometimes it needs random numbers
+  (allow guix_daemon_t
+         random_device_t
+         (chr_file (read)))
+
+  ;; guix system vm
+  (allow guix_daemon_t
+         kvm_device_t
+         (chr_file (ioctl open read write)))
+  (allow guix_daemon_t
+         kernel_t
+         (system (ipc_info)))
+
+  ;; Label file system
+  (filecon "@guix_sysconfdir@/guix(/.*)?"
+           any (system_u object_r guix_daemon_conf_t (low low)))
+  (filecon "@guix_localstatedir@/guix(/.*)?"
+           any (system_u object_r guix_daemon_conf_t (low low)))
+  (filecon "@guix_localstatedir@/guix/profiles(/.*)?"
+           any (system_u object_r guix_profiles_t (low low)))
+  (filecon "/gnu"
+           dir (unconfined_u object_r guix_store_content_t (low low)))
+  (filecon "@storedir@(/.+)?"
+           any (unconfined_u object_r guix_store_content_t (low low)))
+  (filecon "@storedir@/[^/]+/.+"
+           any (unconfined_u object_r guix_store_content_t (low low)))
+  (filecon "@prefix@/bin/guix-daemon"
+           file (system_u object_r guix_daemon_exec_t (low low)))
+  (filecon "@guix_localstatedir@/guix/profiles/per-user/[^/]+/current-guix/bin/guix-daemon"
+           file (system_u object_r guix_daemon_exec_t (low low)))
+  (filecon "@storedir@/.+-(guix-.+|profile)/bin/guix-daemon"
+           file (system_u object_r guix_daemon_exec_t (low low)))
+  (filecon "@storedir@/[a-z0-9]+-guix-daemon"
+           file (system_u object_r guix_daemon_exec_t (low low)))
+  (filecon "@guix_localstatedir@/guix/daemon-socket/socket"
+           any (system_u object_r guix_daemon_socket_t (low low))))

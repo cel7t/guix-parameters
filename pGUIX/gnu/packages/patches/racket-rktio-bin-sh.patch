@@ -1,0 +1,85 @@
+From 6a553f24439fe64fd3a2f0b5902f00590ca4241f Mon Sep 17 00:00:00 2001
+From: Philip McGrath <philip@philipmcgrath.com>
+Date: Thu, 4 Mar 2021 04:11:50 -0500
+Subject: [PATCH] rktio: patch rktio_process for "/bin/sh" on Guix
+
+Racket provides the functions `system` and `process`,
+which execute shell commands using `sh` (or `cmd` on Windows).
+Racket assumes that `sh` can be found at "/bin/sh",
+which is not necessarily true on Guix.
+
+This patch adds a special case for "/bin/sh" to `rktio_process`,
+the C function that implements the core of `system`, `process`,
+and related Racket functions.
+
+If:
+
+    1. The nonstandard but ubiquitous macro `_PATH_BSHELL` from
+       <paths.h> is defined; and
+
+    2. `rktio_process` is called with the exact path "/bin/sh"; and
+
+    3. The file specified by `_PATH_BSHELL` exists;
+
+then `rktio_process` will execute the file specified by `_PATH_BSHELL`
+instead of "/bin/sh".
+
+Checking that the path specified by `_PATH_BSHELL` exists safeguards
+against obscure errors if attempting to use stand-alone executables
+built by the patched Racket in non-Guix envoronments.
+---
+ racket/src/rktio/rktio_process.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/racket/src/rktio/rktio_process.c b/racket/src/rktio/rktio_process.c
+index fafaf728c1..796ebc59ce 100644
+--- a/racket/src/rktio/rktio_process.c
++++ b/racket/src/rktio/rktio_process.c
+@@ -9,6 +9,7 @@
+ # include <sys/wait.h>
+ # include <errno.h>
+ # include <unistd.h>
++# include <paths.h> /* PATCHED for Guix */
+ # ifdef USE_ULIMIT
+ #  include <ulimit.h>
+ # endif
+@@ -1301,12 +1302,14 @@ int rktio_process_allowed_flags(rktio_t *rktio)
+ /*========================================================================*/
+ 
+ rktio_process_result_t *rktio_process(rktio_t *rktio,
+-                                      const char *command, int argc, rktio_const_string_t *argv,
++                                      /* PATCHED for Guix (next line) */
++                                      const char *_guix_orig_command, int argc, rktio_const_string_t *argv,
+                                       rktio_fd_t *stdout_fd, rktio_fd_t *stdin_fd, rktio_fd_t *stderr_fd,
+                                       rktio_process_t *group_proc,
+                                       const char *current_directory, rktio_envvars_t *envvars,
+                                       int flags)
+ {
++  const char *command; /* PATCHED for Guix */
+   rktio_process_result_t *result;
+   intptr_t to_subprocess[2], from_subprocess[2], err_subprocess[2];
+   int pid;
+@@ -1333,6 +1336,18 @@ rktio_process_result_t *rktio_process(rktio_t *rktio,
+   int i;
+ #endif
+ 
++/* BEGIN PATCH for Guix */
++#if defined(_PATH_BSHELL)
++  command =
++      ((0 == strcmp(_guix_orig_command, "/bin/sh"))
++       && rktio_file_exists(rktio, _PATH_BSHELL))
++      ? _PATH_BSHELL
++      : _guix_orig_command;
++#else
++  command = _guix_orig_command;
++#endif
++/* END PATCH for Guix */
++
+   /* avoid compiler warnings: */
+   to_subprocess[0] = -1;
+   to_subprocess[1] = -1;
+
+base-commit: 9d228d16fb99c274c964e5bef93e97333888769f
+-- 
+2.32.0
+

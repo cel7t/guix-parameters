@@ -1,0 +1,112 @@
+Make sure that statements such as:
+
+  strcpy (dst, "/gnu/store/…");
+
+or
+
+  static const char str[] = "/gnu/store/…";
+  …
+  strcpy (dst, str);
+
+do not result in chunked /gnu/store strings that are undetectable by
+Guix's GC and its grafting code.  See <https://bugs.gnu.org/24703>
+and <https://bugs.gnu.org/30395>.
+
+
+--- gcc-5.3.0/gcc/builtins.c	2016-10-18 10:50:46.080616285 +0200
++++ gcc-5.3.0/gcc/builtins.c	2016-11-09 15:26:43.693042737 +0100
+@@ -3192,6 +3192,58 @@ determine_block_size (tree len, rtx len_
+ 			  GET_MODE_MASK (GET_MODE (len_rtx)));
+ }
+ 
++extern void debug_tree (tree);
++
++/* Return true if STR contains the string "/gnu/store".  */
++
++bool
++store_reference_p (tree str)
++{
++  if (getenv ("GUIX_GCC_DEBUG") != NULL)
++    debug_tree (str);
++
++  if (TREE_CODE (str) == ADDR_EXPR)
++    str = TREE_OPERAND (str, 0);
++
++  if (TREE_CODE (str) == VAR_DECL
++      && TREE_STATIC (str)
++      && TREE_READONLY (str))
++    {
++      /* STR may be a 'static const' variable whose initial value
++         is a string constant.  See <https://bugs.gnu.org/30395>.  */
++      str = DECL_INITIAL (str);
++      if (str == NULL_TREE)
++        return false;
++    }
++
++  if (TREE_CODE (str) != STRING_CST)
++    return false;
++
++  int len;
++  const char *store;
++
++  store = getenv ("NIX_STORE") ? getenv ("NIX_STORE") : "/gnu/store";
++  len = strlen (store);
++
++  /* Size of the hash part of store file names, including leading slash and
++     trailing hyphen.  */
++  const int hash_len = 34;
++
++  if (TREE_STRING_LENGTH (str) < len + hash_len)
++    return false;
++
++  /* We cannot use 'strstr' because 'TREE_STRING_POINTER' returns a string
++     that is not necessarily NUL-terminated.  */
++
++  for (int i = 0; i < TREE_STRING_LENGTH (str) - (len + hash_len); i++)
++    {
++      if (strncmp (TREE_STRING_POINTER (str) + i, store, len) == 0)
++	return true;
++    }
++
++  return false;
++}
++
+ /* Helper function to do the actual work for expand_builtin_memcpy.  */
+ 
+ static rtx
+@@ -3207,6 +3243,13 @@ expand_builtin_memcpy_args (tree dest, t
+   unsigned HOST_WIDE_INT max_size;
+   unsigned HOST_WIDE_INT probable_max_size;
+ 
++  /* Do not emit block moves, which translate to the 'movabs' instruction on
++     x86_64, when SRC refers to store items.  That way, store references
++     remain visible to the Guix GC and grafting code.  See
++     <https://bugs.gnu.org/24703>.  */
++  if (store_reference_p (src))
++    return NULL_RTX;
++
+   /* If DEST is not a pointer type, call the normal function.  */
+   if (dest_align == 0)
+     return NULL_RTX;
+
+--- gcc-5.5.0/gcc/gimple-fold.c	2018-03-20 11:36:16.709442004 +0100
++++ gcc-5.5.0/gcc/gimple-fold.c	2018-03-20 11:46:43.838487065 +0100
+@@ -769,6 +769,8 @@ var_decl_component_p (tree var)
+   return SSA_VAR_P (inner);
+ }
+ 
++extern bool store_reference_p (tree);
++
+ /* Fold function call to builtin mem{{,p}cpy,move}.  Return
+    false if no simplification can be made.
+    If ENDP is 0, return DEST (like memcpy).
+@@ -1099,6 +1101,9 @@ gimple_fold_builtin_memory_op (gimple_st
+       if (!srctype)
+ 	return false;
+ 
++      if (store_reference_p (src))
++        return false;
++
+       src_align = get_pointer_alignment (src);
+       dest_align = get_pointer_alignment (dest);
+       if (dest_align < TYPE_ALIGN (desttype)
