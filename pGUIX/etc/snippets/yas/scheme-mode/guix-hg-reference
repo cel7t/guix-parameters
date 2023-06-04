@@ -1,7 +1,0 @@
-# -*- mode: snippet -*-
-# name: guix-hg-reference
-# key: hg-reference...
-# --
-(hg-reference
-  (url "$1")
-  (changeset ${2:changeset}))

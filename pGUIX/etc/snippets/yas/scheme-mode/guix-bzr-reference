@@ -1,7 +1,0 @@
-# -*- mode: snippet -*-
-# name: guix-bzr-reference
-# key: bzr-reference...
-# --
-(bzr-reference
-  (url "$1")
-  (revision ${2:ref}))
