@@ -16,6 +16,10 @@
     (special (on flamingo) ; flamingo, if ON, has a special transform
              (off cat hippo)))) ; cat and hippo have one when OFF
 
+;; special transforms here refer to parameters that need a special package transform to be run
+;; for example flamingo could have a generic transform that just adds a dependency feathers,
+;; but in this particular instance it also needs to add a configuration-flag pink
+
 (define (p/default p-list)
   (delete-duplicates 
    (apply

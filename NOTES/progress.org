@@ -15,3 +15,12 @@ Example: an x86 package that absolutely cannot run on ARM
 This feature will mostly be used for signaling errors
 * 6/5
 ** Made a side-effect free version of p/os-parameters-overriding!
+** Started work on a blog entry for the Guix site
+Things to cover:
+- About Me
+- The Problem Statement
+- How Parameters Can Benefit Guix
+- Current Discussion Around Parameters
+** Started looking into [[https://www.gnu.org/software/guile/manual/html_node/SRFI_002d9-Records.html][Record Types]] for parameters
+Advice from Ludo: wherever possible, use *concrete data structures* instead of S-Expressions
+I need to build record types for holding information about parameters and their configuration.
