@@ -83,29 +83,29 @@
 (define (p-xor . args)
   (= 1
      (count (lambda (x) (eqv? #t x))
-                    args)))
+            args)))
 
 (p-and #t #t)
 
 (define (p/resolve p-spec parameter-list)
   (apply
    p-and
-  (let ((p-list (cons 'none parameter-list)))
-   (map
-     (lambda (ls)
-       (apply
-        (case (car ls)
-          ((required) p-and)
-          ((required-off) p-none)
-          ((optional) (lambda _ #t))
-          ((one-of) p-xor)
-          ((special) (lambda _ #t))
-          (else (error "Invalid parameter specification: " (car ls))))
-        (map
-         (lambda (sym)
-           (not (not (member sym p-list))))
-         (cdr ls))))
-     (cdr p-spec)))))
+   (let ((p-list (cons 'none parameter-list)))
+     (map
+      (lambda (ls)
+        (apply
+         (case (car ls)
+           ((required) p-and)
+           ((required-off) p-none)
+           ((optional) (lambda _ #t))
+           ((one-of) p-xor)
+           ((special) (lambda _ #t))
+           (else (error "Invalid parameter specification: " (car ls))))
+         (map
+          (lambda (sym)
+            (not (not (member sym p-list))))
+          (cdr ls))))
+      (cdr p-spec)))))
 
 (p/resolve %parameters (p/default %parameters)) ; sanity check
 
@@ -241,17 +241,17 @@
          (special (last (cdr p-spec)))) ; "special" must be the last list
     (if (eqv? (car special) 'special)
         (filter (lambda (ls) (> (length ls) 1)) ; remove "(on)" and "(off)"
-             (map (lambda (ls)
-                    (if (eqv? (car ls) 'on)
-                        (cons 'on
-                              (lset-intersection eqv?
-                                                 ps/e
-                                                 (cdr ls)))
-                        (cons 'off
-                              (lset-intersection eqv?
-                                                 ps/d
-                                                 (cdr ls)))))
-                  (cdr special)))
+                (map (lambda (ls)
+                       (if (eqv? (car ls) 'on)
+                           (cons 'on
+                                 (lset-intersection eqv?
+                                                    ps/e
+                                                    (cdr ls)))
+                           (cons 'off
+                                 (lset-intersection eqv?
+                                                    ps/d
+                                                    (cdr ls)))))
+                     (cdr special)))
         '())))
 
 (p/special-transforms %parameters
