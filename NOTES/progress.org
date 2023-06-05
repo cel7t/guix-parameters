@@ -13,3 +13,5 @@ The patch was failing so I had to manually apply it.
 ** Added required-off for packages with hard parameter disagreements
 Example: an x86 package that absolutely cannot run on ARM
 This feature will mostly be used for signaling errors
+* 6/5
+** Made a side-effect free version of p/os-parameters-overriding!
