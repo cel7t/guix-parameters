@@ -1,0 +1,121 @@
+#+TITLE:Syntax for Parameters
+#+AUTHOR:Sarthak Shah
+
+Hello, this document is a draft that covers some ideas for parameter syntax.
+* S-expressions
+The idea for this format came from a mailing-list reply to my post on parameterized packages; instead of using a huge number of confusing symbols, it could be possible to specify parameters using just S-expressions
+** Package parameter combination declaration
+#+BEGIN_SRC scheme
+(parameters ; the parameters section of a package 'zoo'
+  (required ant beaver) ; these are REQUIRED to build the package
+  (required-off zebra) ; these are REQUIRED TO BE OFF, useful for forcing errors
+  (optional (cat dog) elephant) ; these are optional, cat and dog are default
+  (one-of cat flamingo gorilla) ; only one of these is allowed, cat is default
+  (one-of none hippo impala) ; only one of these is allowed, none are default
+  (special (on flamingo) ; flamingo, if ON, has a special transform
+           (off cat hippo))) ; these will have them when OFF
+#+END_SRC
+** User parameter argument declaration
+#+BEGIN_SRC scheme
+  (parameters
+   (on ant beaver cat) ; these will be ON
+   (off flamingo zebra)) ; these will be OFF
+#+END_SRC
+** Using these parameters
+There are three ways that these can be used:
+1) The --with-parameters transform
+   #+BEGIN_SRC shell
+     guix build zoo --with-parameters="(on ant beaver cat) (off flamingo zebra)"
+   #+END_SRC
+2) The --with-recursive-parameters transform
+   #+BEGIN_SRC shell
+     guix build zoo --with-recursive-parameters="(on ant beaver cat) (off flamingo zebra)"
+   #+END_SRC
+   (These parameters will /recurse/ over the dependencies of the package)
+3) The operating-system's "transformations" entry
+   #+BEGIN_SRC scheme
+     (operating-system
+      ;; ...
+      (transformations
+       ;; ...
+       (with-parameters . "(on ant beaver cat)
+                           (off flamingo zebra)")))
+   #+END_SRC
+* Keys
+A less S-expression heavy way to use these could be to use #:keys
+** Package parameter combination declaration
+#+BEGIN_SRC scheme
+(parameters ; the parameters section of a package 'zoo'
+  #:required ant beaver ; these are REQUIRED to build the package
+  #:required-off zebra ; these are REQUIRED TO BE OFF, useful for forcing errors
+  #:optional (cat dog) elephant ; these are optional, cat and dog are default
+  #:one-of cat flamingo gorilla ; only one of these is allowed, cat is default
+  #:one-of none hippo impala ; only one of these is allowed, none are default
+  #:special #:on flamingo ; flamingo, if ON, has a special transform
+            #:off cat hippo) ; these will have them when OFF
+#+END_SRC
+** User parameter argument declaration
+#+BEGIN_SRC scheme
+  (parameters
+   #:on ant beaver cat ; these will be ON
+   #:off flamingo zebra) ; these will be OFF
+#+END_SRC
+** Using these parameters
+There are three ways that these can be used:
+1) The --with-parameters transform
+   #+BEGIN_SRC shell
+     guix build zoo --with-parameters="#:on ant beaver cat #:off flamingo zebra"
+   #+END_SRC
+2) The --with-recursive-parameters transform
+   #+BEGIN_SRC shell
+     guix build zoo --with-recursive-parameters="#:on ant beaver cat #:off flamingo zebra"
+   #+END_SRC
+   (These parameters will /recurse/ over the dependencies of the package)
+3) The operating-system's "transformations" entry
+   #+BEGIN_SRC scheme
+     (operating-system
+      ;; ...
+      (transformations
+       ;; ...
+       (with-parameters . "#:on ant beaver cat
+                           #:off flamingo zebra")))
+   #+END_SRC
+* Original
+This is the original idea I had given in the proposal and the blog post
+** Package parameter combination declaration
+#+BEGIN_SRC scheme
+  (parameters (and
+    ant beaver zebra! ; ant and beaver are REQUIRED, zebra is REQUIRED TO BE OFF
+    (optional cat^ dog^ elephant) ; these are optional, cat and dog are default
+    (one-of cat^* flamingo* gorilla) ; only one of these is allowed, cat is default
+    (one-of hippo* impala))) ; only one of these is allowed, none are default
+  ;; flamingo, cat and hippo have special transforms
+#+END_SRC
+** User parameter argument declaration
+#+BEGIN_SRC scheme
+   ant beaver cat ; these will be ON
+   flamingo! zebra! ; these will be OFF
+#+END_SRC
+** Using these parameters
+There are three ways that these can be used:
+1) The --with-parameters transform
+   #+BEGIN_SRC shell
+     guix build zoo --with-parameters="ant beaver cat flamingo! zebra!"
+   #+END_SRC
+2) The --with-recursive-parameters transform
+   #+BEGIN_SRC shell
+     guix build zoo --with-recursive-parameters="ant beaver cat flamingo! zebra!"
+   #+END_SRC
+   (These parameters will /recurse/ over the dependencies of the package)
+3) The operating-system's "transformations" entry
+   #+BEGIN_SRC scheme
+     (operating-system
+      ;; ...
+      (transformations
+       ;; ...
+       (with-parameters . "ant beaver cat
+                           flamingo! zebra!")))
+   #+END_SRC
+* Conclusion
+Ultimately, either one of these or a combination of these could be used to implement parameters.
+The syntax itself is malleable as long as the underlying technology has been built.
