@@ -1,5 +1,6 @@
 ;;; GNU Guix --- Functional package management for GNU
 ;;; Copyright © 2020 Ludovic Courtès <ludo@gnu.org>
+;;; Copyright © 2023 Sarthak Shah <shahsarthakw@gmail.com>
 ;;; 
 ;;; This file is part of GNU Guix.
 ;;;
