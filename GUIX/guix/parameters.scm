@@ -23,9 +23,11 @@
   #:use-module (guix diagnostics)
   #:use-module (guix i18n)
   #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-13)
   #:use-module (srfi srfi-34)
   #:use-module (srfi srfi-35)
   #:use-module (ice-9 match)
+  #:use-module (ice-9 hash-table)
   #:export (package-parameter
             package-parameter?
             package-parameter-name
@@ -63,7 +65,19 @@
   (name          package-parameter-name)
   (property      package-parameter-property (default (string->symbol name)))
   (type          package-parameter-type)
+  ;; the standard transforms; of the form (list ((build-system) transform))
+  ;; parses it like a (case x) statement with x being the build system
+  ;; macro converts ((a b) t) -> (a t) (b t) which is then turned into a hash table
+  ;; XXX: make an easier way to chain transforms instead of using lambdas
+  ;; XXX: write something to throw an error for invalid build systems
+  (transforms    package-parameter-transforms (default (alist->hash-table '())))
   (description   package-parameter-description))
+  
+;; Note that if a transform applies to all but a, b and c,
+;; (case build-system
+;;  ((a b c) error-out)
+;;  (else do-something))
+;; works
 
 ;; Type of a package parameter.
 (define-record-type* <parameter-type> parameter-type
@@ -73,6 +87,64 @@
   (string->value parameter-type-string->value)
   (value->string parameter-type-value->string)
   (universe      parameter-type-universe))
+
+;; Here is how package parameter specs should be declared:
+(parameter-spec
+ (package-name "foo")
+ (required-parameters "a b c")
+ (optional-parameters "d e")
+
+(define-record-type* <parameter-spec> parameter-spec
+  make-parameter-spec
+  parameter-spec?
+  this-parameter-spec
+  (package-name package-name)
+  ;; local-parameters: parameters specific to the package
+  ;; these will have their definitions next to them
+  ;; '((libzoo . (package-parameter ...)) ...)
+  (local    ps/local-parameters
+            (default (alist->hash-table '()))
+            (sanitize (lambda (val)
+                        (cond ((hash-table? val) val)
+                              ((list? val) (alist->hash-table val))
+                              (else (throw 'bad! val)))))
+            (thunked))
+  (required ps/required-parameters
+            (default (alist->hash-table '()))
+            (sanitize (lambda (val)
+                        (cond ((hash-table? val) val)
+                              ((list? val) (alist->hash-table val))
+                              (else (throw 'bad! val)))))
+            (thunked)) 
+  (optional ps/optional-parameters
+            (default (alist->hash-table '()))
+            (sanitize (lambda (val)
+                        (cond ((hash-table? val) val)
+                              ((list? val) (alist->hash-table val))
+                              (else (throw 'bad! val)))))
+            (thunked))
+  (one-of ps/one-of-parameters
+            (default '())
+            (thunked))
+  (special ps/special-parameters
+            (default (alist->hash-table '()))
+            (sanitize (lambda (val)
+                        (cond ((hash-table? val) val)
+                              ((list? val) (alist->hash-table val))
+                              (else (throw 'bad! val)))))
+            (thunked))
+  (transforms ps/transforms
+              ;; add checking for whether all LOCAL and
+              ;; SPECIAL have been given transforms or not
+              (default (alist->hash-table '()))
+              (sanitize (lambda (val)
+                          (cond ((hash-table? val) val)
+                                ((list? val) (alist->hash-table val))
+                                (else (throw 'bad! val)))))
+              (thunked)))
+
+;; for `one-of` we will still use a list to represent the tree
+;; as a hash map will not benefit it
 
 ;; g23: Most parameters should be boolean
 ;; Might make sense to add a recursive type
@@ -134,3 +206,8 @@
       '()))
 
 ;; g23: Change the parameter and package record to contain our parameters
+
+;; Our parameter record should have the following:
+;; - Parameter type
+;; - Build systems it works with
+;; - Transforms in the style of (case x) where x is the build system
