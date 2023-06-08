@@ -65,14 +65,26 @@
   (name          package-parameter-name)
   (property      package-parameter-property (default (string->symbol name)))
   (type          package-parameter-type)
-  ;; the standard transforms; of the form (list ((build-system) transform))
-  ;; parses it like a (case x) statement with x being the build system
-  ;; macro converts ((a b) t) -> (a t) (b t) which is then turned into a hash table
-  ;; XXX: make an easier way to chain transforms instead of using lambdas
-  ;; XXX: write something to throw an error for invalid build systems
-  (transforms    package-parameter-transforms (default (alist->hash-table '())))
+  ;; the standard transforms; of the form (list ((build-system ...) transform))
+  ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
+  ;; this is then turned into a hash table s.t (hash-ref <tbl> build-system) returns t*
+  ;; XXX: option to have common elements among multiple build systems (inherit of sorts)
+  (transforms    package-parameter-transforms
+                 (default (alist->hash-table '()))
+                 (sanitize (lambda (val)
+                             (cond
+                              ((hash-table? val) val)
+                              ((and (list? val)
+                                    (list? (car val)))
+                               (alist->hash-table
+                                (apply append
+                                       (map (lambda (x)
+                                              (cons x
+                                                (apply compose (cdr val))))
+                                            (car val)))))
+                              (else (throw 'bad! val))))))
   (description   package-parameter-description))
-  
+
 ;; Note that if a transform applies to all but a, b and c,
 ;; (case build-system
 ;;  ((a b c) error-out)
@@ -133,10 +145,15 @@
                               ((list? val) (alist->hash-table val))
                               (else (throw 'bad! val)))))
             (thunked))
+  (canonical-combinations ps/canonical-combinations
+                          ;; XXX: here we'll run the parser that returns default values
+                          ;;      also have a sanitizer that creates combinations from lists
+                          (default '())
+                          (thunked))
   (transforms ps/transforms
-              ;; add checking for whether all LOCAL and
-              ;; SPECIAL have been given transforms or not
+              ;; XXX: check if all the SPECIAL have been given transforms or not
               (default (alist->hash-table '()))
+              ;; use the parameter transform sanitizer here
               (sanitize (lambda (val)
                           (cond ((hash-table? val) val)
                                 ((list? val) (alist->hash-table val))
@@ -145,6 +162,28 @@
 
 ;; for `one-of` we will still use a list to represent the tree
 ;; as a hash map will not benefit it
+
+;; XXX: declare a MACRO that makes it possible to declare packages
+;; with other parameters without transforms
+;; One way could be to turn the package modifiers into transforms themselves
+;; (package
+;;   ...
+;;    (p/if (a b) some-property
+;;          something))
+;; becomes
+;; (package
+;;   ...
+;;   (parameters
+;;    ...
+;;    (special
+;;     ((a b)
+;;      transform-that-adds-something-to-some-property))))
+;; or it could be a function with these parameters as arguments
+;; 
+;; another way would be to create 'parameteric variants'
+;; this would be similar to package/inherit but here it won't create a new package
+;; but rather a variant of the package with the specific properties defined
+;; TEST: packages as procedures with non-dependency arguments
 
 ;; g23: Most parameters should be boolean
 ;; Might make sense to add a recursive type
