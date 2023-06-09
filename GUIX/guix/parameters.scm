@@ -239,14 +239,146 @@
                      (alist-delete property (package-properties package)
                                    eq?)))))))
 
-(define-syntax-rule (optionally property exp)
-  (if (assq-ref (package-properties this-package) property)
-      (list exp)
-      '()))
+;; (define-syntax-rule (optionally property exp)
+;;   (if (assq-ref (package-properties this-package) property)
+;;       (list exp)
+;;       '()))
 
-;; g23: Change the parameter and package record to contain our parameters
+(define-syntax p/if
+  (syntax-rules ()
+    [(p/if property exp)
+     (let ((properties (package-properties this-package)))
+       (if (if (list? property)
+               (not (member
+                     #f
+                     (map (lambda (x) (not (not (assq-ref properties x))))
+                          property)))
+               (assq-ref properties property))
+           (list exp)
+           '()))]
+    [(p/if property exp exp-else)
+     (let ((properties (package-properties this-package)))
+       (if (if (list? property)
+               (not (member
+                     #f
+                     (map (lambda (x) (not (not (assq-ref properties x))))
+                          property)))
+               (assq-ref properties property))
+           (list exp)
+           (list exp-else)))]))
 
-;; Our parameter record should have the following:
-;; - Parameter type
-;; - Build systems it works with
-;; - Transforms in the style of (case x) where x is the build system
+;; Test these macros without using packages:
+;; (define (package-properties _) '((a . 1) (b . 2) (c . 3)))
+;; (define this-package '())
+
+;; (p/if '(a b e)
+;;       (display "YES")
+;;       (display "NO"))
+
+;; p/match-any:
+;; (p/match-any
+;; ((a b) e1 e2 ..)
+;; ((c) d1 d2 ..)
+;; (else c1 c2 ...))
+
+(define-syntax p/match-any
+  (syntax-rules (all)
+    [(_) '()]
+    [(_ (all clauses ...)) (begin clauses ...)]
+    [(_ ((parameters ...)) rest ...) (p/match-any rest ...)]
+    [(_ ((parameters ...) clauses ...) rest ...)
+     (let ((properties (package-properties this-package)))
+       (begin
+         (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
+                              (list parameters ...)))
+              (begin clauses ...))
+         (p/match-any rest ...)))]))
+
+;; (let ((SOME_ALIST_FOR_THIS_EXAMPLE '()))
+;;   (p/match-any
+;;    (('a 'd)
+;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(1) SOME_ALIST_FOR_THIS_EXAMPLE))
+;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(2) SOME_ALIST_FOR_THIS_EXAMPLE)))
+;;    (('c))
+;;    (('e)
+;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(3) SOME_ALIST_FOR_THIS_EXAMPLE)))
+;;    (all
+;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(4) SOME_ALIST_FOR_THIS_EXAMPLE))))
+;;   SOME_ALIST_FOR_THIS_EXAMPLE)
+
+;; The answer to this should be '(4 2 1)
+;; note that all is essentially useless, one can simply put the expression in all
+;; outside the macro and it will work the same
+
+(define-syntax p/match-all
+  (syntax-rules (all)
+    [(_) '()]
+    [(_ (all clauses ...)) (begin clauses ...)]
+    [(_ ((parameters ...)) rest ...) (p/match-all rest ...)]
+    [(_ ((parameters ...) clauses ...) rest ...)
+     (let ((properties (package-properties this-package)))
+       (begin
+         (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+                              (list parameters ...))))
+              (begin clauses ...))
+         (p/match-all rest ...)))]))
+
+;; (p/match-all
+;;  (('a 'b) (display "YES") (display "YES"))
+;;  (('c 'd) (display "NO"))
+;;  (all (display "ALL")))
+
+(define-syntax p/match-case
+  (syntax-rules (all)
+    [(_) '()]
+    [(_ (all clauses ...)) (begin clauses ...)]
+    [(_ ((parameters ...)) rest ...) (p/match-case rest ...)]
+    [(_ ((parameters ...) clauses ...) rest ...)
+     (let ((properties (package-properties this-package)))
+       (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
+                           (list parameters ...)))
+           (begin clauses ...)
+           (p/match-case rest ...)))]))
+
+;; should short-circuit at YESYES
+;; (p/match-case
+;;  (('a 'b 'e) (display "YES") (display "YES"))
+;;  (('c 'd) (display "NO"))
+;;  (all (display "ALL")))
+   
+
+;; p/match:
+;; combine all and any into one
+;; (p/match
+;;  ((any a b) ...)
+;;  ((all a b c) ...)
+;;  (all ...))
+
+(define-syntax p/match
+  (syntax-rules (all any)
+    [(_) '()]
+    [(_ (all clauses ...)) (begin clauses ...)]
+    [(_ ((predicate) clauses ...)) (begin clauses ...)]
+    [(_ ((predicate parameters ...)) rest ...) (p/match-case rest ...)]
+    [(_ ((all parameters ...) clauses ...) rest ...)
+     (let ((properties (package-properties this-package)))
+       (begin
+         (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+                              (list parameters ...))))
+              (begin clauses ...))
+         (p/match rest ...)))]
+    [(_ ((any parameters ...) clauses ...) rest ...)
+     (let ((properties (package-properties this-package)))
+       (begin
+         (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
+                              (list parameters ...)))
+              (begin clauses ...))
+         (p/match rest ...)))]))
+
+;; (p/match
+;;  ((all 'a 'b) (display "YES"))
+;;  ((any 'c 'e) (display "YES"))
+;;  ((all 'a 'o) (display "NO"))
+;;  (all (display "ALL")))
+ 
+;; Ask: do we need a p/match-case with all?
