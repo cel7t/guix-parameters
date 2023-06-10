@@ -101,10 +101,10 @@
   (universe      parameter-type-universe))
 
 ;; Here is how package parameter specs should be declared:
-(parameter-spec
- (package-name "foo")
- (required-parameters "a b c")
- (optional-parameters "d e")
+;; (parameter-spec
+;;  (package-name "foo")
+;;  (required-parameters (list a b c))
+;;  (optional-parameters (list d e)))
 
 (define-record-type* <parameter-spec> parameter-spec
   make-parameter-spec
@@ -249,6 +249,29 @@
     [(p/if property exp)
      (let ((properties (package-properties this-package)))
        (if (if (list? property)
+               (member
+                     #t
+                     (map (lambda (x) (not (not (assq-ref properties x))))
+                          property))
+               (assq-ref properties property))
+           (list exp)
+           '()))]
+    [(p/if property exp exp-else)
+     (let ((properties (package-properties this-package)))
+       (if (if (list? property)
+               (member
+                     #t
+                     (map (lambda (x) (not (not (assq-ref properties x))))
+                          property))
+               (assq-ref properties property))
+           (list exp)
+           (list exp-else)))]))
+
+(define-syntax p/if-all
+  (syntax-rules ()
+    [(p/if-all property exp)
+     (let ((properties (package-properties this-package)))
+       (if (if (list? property)
                (not (member
                      #f
                      (map (lambda (x) (not (not (assq-ref properties x))))
@@ -256,7 +279,7 @@
                (assq-ref properties property))
            (list exp)
            '()))]
-    [(p/if property exp exp-else)
+    [(p/if-all property exp exp-else)
      (let ((properties (package-properties this-package)))
        (if (if (list? property)
                (not (member
@@ -274,6 +297,10 @@
 ;; (p/if '(a b e)
 ;;       (display "YES")
 ;;       (display "NO"))
+
+;; (p/if-all '(a b e)
+;;           (display "NO")
+;;           (display "YES"))
 
 ;; p/match-any:
 ;; (p/match-any
@@ -328,17 +355,17 @@
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
 
-(define-syntax p/match-case
+(define-syntax p/match-case-any
   (syntax-rules (all)
     [(_) '()]
     [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((parameters ...)) rest ...) (p/match-case rest ...)]
+    [(_ ((parameters ...)) rest ...) (p/match-case-any rest ...)]
     [(_ ((parameters ...) clauses ...) rest ...)
      (let ((properties (package-properties this-package)))
        (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                            (list parameters ...)))
            (begin clauses ...)
-           (p/match-case rest ...)))]))
+           (p/match-case-any rest ...)))]))
 
 ;; should short-circuit at YESYES
 ;; (p/match-case
@@ -357,9 +384,8 @@
 (define-syntax p/match
   (syntax-rules (all any)
     [(_) '()]
-    [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((predicate) clauses ...)) (begin clauses ...)]
-    [(_ ((predicate parameters ...)) rest ...) (p/match-case rest ...)]
+    [(_ (all clauses ...) rest ...) (begin (begin clauses ...) (p/match rest ...))]
+    [(_ ((predicate parameters ...)) rest ...) (p/match rest ...)]
     [(_ ((all parameters ...) clauses ...) rest ...)
      (let ((properties (package-properties this-package)))
        (begin
@@ -377,8 +403,43 @@
 
 ;; (p/match
 ;;  ((all 'a 'b) (display "YES"))
+;;  (all (display "YES"))
 ;;  ((any 'c 'e) (display "YES"))
 ;;  ((all 'a 'o) (display "NO"))
 ;;  (all (display "ALL")))
  
-;; Ask: do we need a p/match-case with all?
+(define-syntax p/match-case
+  (syntax-rules (all any)
+    [(_) '()]
+    [(_ (all clauses ...) rest ...) (begin clauses ...)]
+    [(_ ((predicate parameters ...)) rest ...) (p/match-case rest ...)]
+    [(_ ((all parameters ...) clauses ...) rest ...)
+     (let ((properties (package-properties this-package)))
+       (if (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+                                (list parameters ...))))
+           (begin clauses ...)
+           (p/match-case rest ...)))]
+    [(_ ((any parameters ...) clauses ...) rest ...)
+     (let ((properties (package-properties this-package)))
+       (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
+                           (list parameters ...)))
+           (begin clauses ...)
+           (p/match-case rest ...)))]))
+
+;; (p/match-case
+;;  ((all 'a 'f) (display "NO"))
+;;  ;; (all (display "YES"))
+;;  ;; ((any 'c 'e) (display "YES"))
+;;  ;; ((all 'a 'b) (display "YES"))
+;;  (all (display "ALL")))
+
+
+;; Now before proceeding with writing a --with-parameter transform,
+;; the following things need to be brought into order:
+;; - global parameter definitions
+;; - parameter spec and the properties field
+;; we will be replacing the original patch's method of writing
+;; all parameters in the properties field, and instead use this
+;; parameter-spec record type
+;; it is a data-structure similar to the `parameters` structure
+;; declared at the start of DRAFTS/parameter-parser.scm
