@@ -64,7 +64,7 @@
   package-parameter?
   (name          package-parameter-name)
   (property      package-parameter-property (default (string->symbol name)))
-  (type          package-parameter-type)
+  (type          package-parameter-type (default boolean))
   ;; the standard transforms; of the form (list ((build-system ...) transform))
   ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
   ;; this is then turned into a hash table s.t (hash-ref <tbl> build-system) returns t*
@@ -80,9 +80,12 @@
                                 (apply append
                                        (map (lambda (x)
                                               (cons x
-                                                (apply compose (cdr val))))
+                                                (options->transformation (cdr val))))
                                             (car val)))))
                               (else (throw 'bad! val))))))
+  ;; ONLY TO BE USED IN LOCAL DEFINITIONS
+  ;; if set to #t, parameter is considered default
+  (default? package-parameter-default? (default #f))
   (description   package-parameter-description))
 
 ;; Note that if a transform applies to all but a, b and c,
@@ -106,20 +109,17 @@
 ;;  (required-parameters (list a b c))
 ;;  (optional-parameters (list d e)))
 
+;; thunked -> we can do stuff like (parameter-spec-optional-parameters ps) to get the optional parameters
 (define-record-type* <parameter-spec> parameter-spec
   make-parameter-spec
   parameter-spec?
   this-parameter-spec
   (package-name package-name)
   ;; local-parameters: parameters specific to the package
-  ;; these will have their definitions next to them
-  ;; '((libzoo . (package-parameter ...)) ...)
+  ;; XXX: extract the symbol from the parameter record thru a sanitizer
   (local    ps/local-parameters
-            (default (alist->hash-table '()))
-            (sanitize (lambda (val)
-                        (cond ((hash-table? val) val)
-                              ((list? val) (alist->hash-table val))
-                              (else (throw 'bad! val)))))
+    ;; keeping it as an alist as it will be useful to retrieve them for the UI
+            (default '())
             (thunked))
   (required ps/required-parameters
             (default (alist->hash-table '()))
@@ -128,6 +128,7 @@
                               ((list? val) (alist->hash-table val))
                               (else (throw 'bad! val)))))
             (thunked)) 
+  ;; XXX: automatically get local parameters
   (optional ps/optional-parameters
             (default (alist->hash-table '()))
             (sanitize (lambda (val)
@@ -135,6 +136,7 @@
                               ((list? val) (alist->hash-table val))
                               (else (throw 'bad! val)))))
             (thunked))
+  ;; XXX: automatically create (x x!) if both are defined
   (one-of ps/one-of-parameters
             (default '())
             (thunked))

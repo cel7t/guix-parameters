@@ -284,3 +284,12 @@
 ;; added 'required-off'; could be useful for packages that cannot be built on systems
 ;; with a particular parameter enabled (ex. x86-only package on ARM system)
 ;; created os-parameters and os-parameters-overriding!
+
+;; For finding complexity, there are two possible ways to do it
+;; This problem is actually what we call a #SAT problem, and it is known to be #P-hard!
+;; But approximating the answer to them is not as computationally expensive.
+;; Since the number of parameters per package will not exceed a small number
+;; it would make more sense to write a simple backtracking-based #SAT solver for the time-being
+;; and then if required, write a more complicated approximating algorithm.
+
+;; Naive approach: recurse over all states of every parameter and make a list of valid combinations
