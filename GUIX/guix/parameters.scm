@@ -67,22 +67,18 @@
   (type          package-parameter-type (default boolean))
   ;; the standard transforms; of the form (list ((build-system ...) transform))
   ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
-  ;; this is then turned into a hash table s.t (hash-ref <tbl> build-system) returns t*
-  ;; XXX: option to have common elements among multiple build systems (inherit of sorts)
+  ;; this is an alist, the parser will handle the special keyword `all` as applicable to all systems.
   (transforms    package-parameter-transforms
-                 (default (alist->hash-table '()))
+                 (default #f) ; no transforms by default
                  (sanitize (lambda (val)
-                             (cond
-                              ((hash-table? val) val)
-                              ((and (list? val)
-                                    (list? (car val)))
-                               (alist->hash-table
-                                (apply append
-                                       (map (lambda (x)
-                                              (cons x
-                                                (options->transformation (cdr val))))
-                                            (car val)))))
-                              (else (throw 'bad! val))))))
+                             (if (and (list? val)
+                                      (list? (car val)))
+                                 (apply append
+                                        (map (lambda (x)
+                                               (cons x
+                                                     (options->transformation (cdr val))))
+                                             (car val)))
+                                 (throw 'bad! val)))))
   ;; ONLY TO BE USED IN LOCAL DEFINITIONS
   ;; if set to #t, parameter is considered default
   (default? package-parameter-default? (default #f))
@@ -103,89 +99,74 @@
   (value->string parameter-type-value->string)
   (universe      parameter-type-universe))
 
-;; Here is how package parameter specs should be declared:
-;; (parameter-spec
-;;  (package-name "foo")
-;;  (required-parameters (list a b c))
-;;  (optional-parameters (list d e)))
-
 ;; thunked -> we can do stuff like (parameter-spec-optional-parameters ps) to get the optional parameters
 (define-record-type* <parameter-spec> parameter-spec
   make-parameter-spec
   parameter-spec?
   this-parameter-spec
-  (package-name package-name)
   ;; local-parameters: parameters specific to the package
-  ;; XXX: extract the symbol from the parameter record thru a sanitizer
-  (local    ps/local-parameters
+  (local    ps/local
     ;; keeping it as an alist as it will be useful to retrieve them for the UI
+    (default '())
+    (sanitize (lambda (ls)
+                (if (list? ls)
+                    (map (lambda (val)
+                           (cond ((package-parameter? val) val)
+                                 ((string? val) (package-parameter (name val)))
+                                 ((symbol? val) (package-parameter (name (symbol->string val))))
+                                 (else (throw 'bad! val))))
+                         ls)
+                    (throw 'bad! val))))
+    (thunked))
+  
+  (defaults ps/defaults
+    (default '())
+    (thunked))
+  (required ps/required
             (default '())
-            (thunked))
-  (required ps/required-parameters
-            (default (alist->hash-table '()))
-            (sanitize (lambda (val)
-                        (cond ((hash-table? val) val)
-                              ((list? val) (alist->hash-table val))
-                              (else (throw 'bad! val)))))
             (thunked)) 
-  ;; XXX: automatically get local parameters
-  (optional ps/optional-parameters
-            (default (alist->hash-table '()))
+  (optional ps/optional
+            (default (map (lambda (x) (package-parameter-name x)) ps/local))
             (sanitize (lambda (val)
-                        (cond ((hash-table? val) val)
-                              ((list? val) (alist->hash-table val))
-                              (else (throw 'bad! val)))))
+                        (if (list? val)
+                            (append val ; automatically add local values
+                                    (map (lambda (x)
+                                           (if (not (member (package-parameter-property x) val))
+                                               (package-parameter-name x)))
+                                         ps/local))
+                            (throw 'bad! val))))
             (thunked))
   ;; XXX: automatically create (x x!) if both are defined
-  (one-of ps/one-of-parameters
-            (default '())
-            (thunked))
-  (special ps/special-parameters
-            (default (alist->hash-table '()))
-            (sanitize (lambda (val)
-                        (cond ((hash-table? val) val)
-                              ((list? val) (alist->hash-table val))
-                              (else (throw 'bad! val)))))
-            (thunked))
-  (canonical-combinations ps/canonical-combinations
-                          ;; XXX: here we'll run the parser that returns default values
-                          ;;      also have a sanitizer that creates combinations from lists
-                          (default '())
-                          (thunked))
-  (transforms ps/transforms
-              ;; XXX: check if all the SPECIAL have been given transforms or not
-              (default (alist->hash-table '()))
-              ;; use the parameter transform sanitizer here
-              (sanitize (lambda (val)
-                          (cond ((hash-table? val) val)
-                                ((list? val) (alist->hash-table val))
-                                (else (throw 'bad! val)))))
-              (thunked)))
-
-;; for `one-of` we will still use a list to represent the tree
-;; as a hash map will not benefit it
-
-;; XXX: declare a MACRO that makes it possible to declare packages
-;; with other parameters without transforms
-;; One way could be to turn the package modifiers into transforms themselves
-;; (package
-;;   ...
-;;    (p/if (a b) some-property
-;;          something))
-;; becomes
-;; (package
-;;   ...
-;;   (parameters
-;;    ...
-;;    (special
-;;     ((a b)
-;;      transform-that-adds-something-to-some-property))))
-;; or it could be a function with these parameters as arguments
-;; 
-;; another way would be to create 'parameteric variants'
-;; this would be similar to package/inherit but here it won't create a new package
-;; but rather a variant of the package with the specific properties defined
-;; TEST: packages as procedures with non-dependency arguments
+  ;; 6/12: this will be handled by the parser
+  (one-of ps/one-of
+          (default '())
+          (thunked))
+  (canonical ps/canonical-combinations
+             (default ps/defaults)
+             (thunked))
+  (use-transforms ps/use-transforms ;; only use transforms for these
+                  (default '())
+                  (sanitize (lambda (ls)
+                              (if (list? ls)
+                                  (map (lambda (xc)
+                                         (if (eqv? #t (cdr x))
+                                             (cond
+                                              ((package-parameter? (car x))
+                                               (cons (package-parameter-property (car x))
+                                                     (package-parameter-transforms (car x))))
+                                              ((symbol? (car x))
+                                               (cons (car x)
+                                                     (find (lambda (g) (evq? (car x)
+                                                                        (package-parameter-property g)))
+                                                           ps/local)))
+                                              ((string? (car x))
+                                               (cons (string->symbol (car x))
+                                                     (find (lambda (g) (evq? (car x)
+                                                                        (package-parameter-name g)))
+                                                           ps/local))))))
+                                       ls)
+                                  (throw 'bad! val))))
+                  (thunked)))
 
 ;; g23: Most parameters should be boolean
 ;; Might make sense to add a recursive type
@@ -208,7 +189,7 @@
                                     (&message (message "wrong value"))))))))))
 
 (define (package-parameters package)
-  (or (assq-ref (package-properties package) 'parameters)
+  (or (assq-ref (package-properties package) 'parameter-spec)
       '()))
 
 (define (package-parameter-value package parameter)
@@ -252,9 +233,9 @@
      (let ((properties (package-properties this-package)))
        (if (if (list? property)
                (member
-                     #t
-                     (map (lambda (x) (not (not (assq-ref properties x))))
-                          property))
+                #t
+                (map (lambda (x) (not (not (assq-ref properties x))))
+                     property))
                (assq-ref properties property))
            (list exp)
            '()))]
@@ -262,9 +243,9 @@
      (let ((properties (package-properties this-package)))
        (if (if (list? property)
                (member
-                     #t
-                     (map (lambda (x) (not (not (assq-ref properties x))))
-                          property))
+                #t
+                (map (lambda (x) (not (not (assq-ref properties x))))
+                     property))
                (assq-ref properties property))
            (list exp)
            (list exp-else)))]))
@@ -348,7 +329,7 @@
      (let ((properties (package-properties this-package)))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
-                              (list parameters ...))))
+                                   (list parameters ...))))
               (begin clauses ...))
          (p/match-all rest ...)))]))
 
@@ -374,7 +355,7 @@
 ;;  (('a 'b 'e) (display "YES") (display "YES"))
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
-   
+
 
 ;; p/match:
 ;; combine all and any into one
@@ -392,7 +373,7 @@
      (let ((properties (package-properties this-package)))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
-                              (list parameters ...))))
+                                   (list parameters ...))))
               (begin clauses ...))
          (p/match rest ...)))]
     [(_ ((any parameters ...) clauses ...) rest ...)
@@ -409,7 +390,7 @@
 ;;  ((any 'c 'e) (display "YES"))
 ;;  ((all 'a 'o) (display "NO"))
 ;;  (all (display "ALL")))
- 
+
 (define-syntax p/match-case
   (syntax-rules (all any)
     [(_) '()]

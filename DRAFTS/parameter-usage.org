@@ -1,0 +1,10 @@
+#+TITLE:Parameter Usage Guidelines
+This is a rough draft for USAGE GUIDELINES for parameters.
+* Global Parameters should only be declared after discussions with the community
+Carelessly written global parameters could break a lot of packages.
+* Local Parameters take precedence over Global Parameters
+This is to maintain backwards compatibility; if a previously local parameter were to be declared global, it could break packages if we give the global version precedence
+* ONLY USE TRANSFORMS IN STRICTLY TRIVIAL CASES
+Transforms abstract away the actual code being changed. This is OK for trivial cases such as test!, but for cases where three to four transforms are being applied it is less than ideal, as a user looking through the package definition has no idea what those transforms are actually doing, and it will also be hard for maintainers to figure out bugs caused due to them.
+Compared to that, using p/if and p/match is both easy and makes it clear what enabling/disabling a specific transform does.
+This is why I have added a USE-TRANSFORMS field to the parameter-spec, where maintainers need to explicitly state when they want to USE THE TRANSFORM for a specific parameter.
