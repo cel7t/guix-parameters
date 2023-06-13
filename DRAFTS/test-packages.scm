@@ -33,11 +33,12 @@
     (properties
      `(,(parameter-spec
          (local (list "xyz" ; "str" -> (package-parameter (name "str"))
-                      'abc ; 'sym -> (package-parameter (name (symbol->string 'sym)))
+                      'abc ; 'sym -> (package-parameter (name 'sym))
                       (package-parameter
                        (name "uvw"))))
+         (global (list global-parameter)) ; all global parameters need to be declared
          (defaults '(xyz)) ; we use syms to refer to parameters
-         (one-of '(xyz abc))
+         (one-of '((xyz abc)))
          (optional '(global-parameter)) ; all local parameters are optional by default
          (use-transforms (list ; transforms will only be used for these
                           ('uvw . ((with-configure-flag . "some-package=--some-flag")))

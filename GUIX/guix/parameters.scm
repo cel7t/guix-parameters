@@ -29,19 +29,18 @@
   #:use-module (ice-9 match)
   #:use-module (ice-9 hash-table)
   #:export (package-parameter
-            package-parameter?
-            package-parameter-name
-            package-parameter-property
-            package-parameter-type
-            package-parameter-description
+            parameter-type
+            parameter-spec
 
             boolean
-            optionally
-
-            package-parameters
-            lookup-package-parameter
-            package-parameter-value
-            set-package-parameter-value))
+            package-parameter-spec
+            parameter/if
+            parameter/if-all
+            parameter/match-any
+            parameter/match-all
+            parameter/match-case-any
+            parameter/match
+            parameter/match-case))
 
 ;;; Commentary:
 ;;;
@@ -62,8 +61,12 @@
 (define-record-type* <package-parameter> package-parameter
   make-package-parameter
   package-parameter?
-  (name          package-parameter-name)
-  (property      package-parameter-property (default (string->symbol name)))
+  (name          package-parameter-name
+                 (sanitize (lambda (x)
+                             (cond
+                              ((string? x) (string->symbol x))
+                              ((symbol? x) x)
+                              (else (throw 'bad! x))))))
   (type          package-parameter-type (default boolean))
   ;; the standard transforms; of the form (list ((build-system ...) transform))
   ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
@@ -118,7 +121,15 @@
                          ls)
                     (throw 'bad! val))))
     (thunked))
-  
+  (global ps/global ;; global parameters used must be declared
+          (default '())
+          (sanitizer (lambda (ls)
+                       (map (lambda (val) ; they must be package parameters
+                              (if (package-parameter? val)
+                                  val
+                                  (throw 'bad! val)))
+                            ls)))
+          (thunked))
   (defaults ps/defaults
     (default '())
     (thunked))
@@ -127,14 +138,8 @@
             (thunked)) 
   (optional ps/optional
             (default (map (lambda (x) (package-parameter-name x)) ps/local))
-            (sanitize (lambda (val)
-                        (if (list? val)
-                            (append val ; automatically add local values
-                                    (map (lambda (x)
-                                           (if (not (member (package-parameter-property x) val))
-                                               (package-parameter-name x)))
-                                         ps/local))
-                            (throw 'bad! val))))
+            ;; 6/13: removed the sanitizer as merging local and optional
+            ;;       should be handled by the parser instead.
             (thunked))
   ;; XXX: automatically create (x x!) if both are defined
   ;; 6/12: this will be handled by the parser
@@ -152,16 +157,16 @@
                                          (if (eqv? #t (cdr x))
                                              (cond
                                               ((package-parameter? (car x))
-                                               (cons (package-parameter-property (car x))
+                                               (cons (package-parameter-name (car x))
                                                      (package-parameter-transforms (car x))))
                                               ((symbol? (car x))
                                                (cons (car x)
                                                      (find (lambda (g) (evq? (car x)
-                                                                        (package-parameter-property g)))
+                                                                        (package-parameter-name g)))
                                                            ps/local)))
                                               ((string? (car x))
                                                (cons (string->symbol (car x))
-                                                     (find (lambda (g) (evq? (car x)
+                                                     (find (lambda (g) (evq? (string->symbol (car x))
                                                                         (package-parameter-name g)))
                                                            ps/local))))))
                                        ls)
@@ -188,45 +193,25 @@
                             (raise (condition
                                     (&message (message "wrong value"))))))))))
 
-(define (package-parameters package)
+(define (package-parameter-spec package)
   (or (assq-ref (package-properties package) 'parameter-spec)
       '()))
 
-(define (package-parameter-value package parameter)
-  (assq-ref (package-properties package)
-            (package-parameter-property parameter)))
+(define (ps/all-parameters pspec) ; for the UI
+  ;; '(sym-a sym-b ...)
+   (append
+    (map (lambda (x) (package-parameter-name x))
+         (ps/local pspec))
+    (map (lambda (x) (package-parameter-name x))
+         (ps/global pspec))
+    (ps/defaults pspec)
+    (ps/required pspec)
+    (apply append (ps/one-of pspec))
+    (ps/optional pspec)))
 
-(define (lookup-package-parameter package name)
-  (find (lambda (parameter)
-          (string=? (package-parameter-name parameter) name))
-        (package-parameters package)))
-
-(define (set-package-parameter-value package name value)
-  (let ((parameter (lookup-package-parameter package name))
-        (location  (package-field-location package 'properties)))
-    (unless parameter
-      (raise (apply make-compound-condition
-                    (formatted-message
-                     (G_ "~a: no such package parameter")
-                     name)
-                    (if location
-                        (list (condition
-                               (&error-location (location location))))
-                        '()))))
-    (let* ((property (package-parameter-property parameter))
-           (type     (package-parameter-type parameter))
-           (value    ((parameter-type-string->value type) value)))
-      (package/inherit package
-        (properties
-         (alist-cons property value
-                     (alist-delete property (package-properties package)
-                                   eq?)))))))
-
-;; (define-syntax-rule (optionally property exp)
-;;   (if (assq-ref (package-properties this-package) property)
-;;       (list exp)
-;;       '()))
-
+(define (ps/parameter-alist pspec))
+  ;; '((sym-a . #t) (sym-b . #f) ...)
+        
 (define-syntax p/if
   (syntax-rules ()
     [(p/if property exp)
@@ -416,13 +401,7 @@
 ;;  ;; ((all 'a 'b) (display "YES"))
 ;;  (all (display "ALL")))
 
-
-;; Now before proceeding with writing a --with-parameter transform,
-;; the following things need to be brought into order:
-;; - global parameter definitions
-;; - parameter spec and the properties field
-;; we will be replacing the original patch's method of writing
-;; all parameters in the properties field, and instead use this
-;; parameter-spec record type
-;; it is a data-structure similar to the `parameters` structure
-;; declared at the start of DRAFTS/parameter-parser.scm
+;; problem: given a symbol, we want to find the associated global parameter
+;; solution:
+;;   1. have all global parameters defined in one place
+;;   2. define %global-package-parameters as a hash with sym keys
