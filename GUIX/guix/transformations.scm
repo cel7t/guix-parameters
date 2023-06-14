@@ -28,7 +28,6 @@
   #:use-module (guix diagnostics)
   #:autoload   (guix download) (download-to-store)
   #:autoload   (guix git-download) (git-reference? git-reference-url)
-  #:autoload   (guix parameters) (set-package-parameter-value) ; g23
   #:autoload   (guix git) (git-checkout git-checkout? git-checkout-url)
   #:autoload   (guix upstream) (package-latest-release
                                 upstream-source-version
@@ -37,6 +36,7 @@
   #:use-module (guix utils)
   #:use-module (guix memoization)
   #:use-module (guix gexp)
+  #:use-module (guix parameters) ; g23
 
   ;; Use the procedure that destructures "NAME-VERSION" forms.
   #:use-module ((guix build utils)
@@ -363,7 +363,6 @@ invalid syntax, or if a package it refers to could not be found."
            ((spec name value)
             (define (replace old)
               (proc old name value))
-
             (cons spec replace))
            (_
             (raise

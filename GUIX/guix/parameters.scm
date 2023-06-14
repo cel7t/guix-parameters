@@ -171,7 +171,14 @@
                                                            ps/local))))))
                                        ls)
                                   (throw 'bad! val))))
-                  (thunked)))
+                  (thunked))
+  (parameter-alist ps/parameter-alist ;; this is ultimately what will be transformed by --with-parameters
+                   ;; '((a . #t) (b . #f) ...)
+                   (default (map (lambda (x) (if (member? x ps/defaults)
+                                            (cons x #t)
+                                            (cons x #f)))
+                                 (ps/all-parameters this-parameter-spec)))
+                   (thunked)))
 
 ;; g23: Most parameters should be boolean
 ;; Might make sense to add a recursive type
@@ -199,6 +206,7 @@
 
 (define (ps/all-parameters pspec) ; for the UI
   ;; '(sym-a sym-b ...)
+  (delete-duplicates
    (append
     (map (lambda (x) (package-parameter-name x))
          (ps/local pspec))
@@ -207,15 +215,100 @@
     (ps/defaults pspec)
     (ps/required pspec)
     (apply append (ps/one-of pspec))
-    (ps/optional pspec)))
+    (ps/optional pspec))))
 
-(define (ps/parameter-alist pspec))
-  ;; '((sym-a . #t) (sym-b . #f) ...)
-        
+(define (ps/base-parameter-alist pspec) ; returns base case
+  ;; '((a . #t) (b . #f) ...)
+  (let* ((default/on (delete-duplicates
+                     (append
+                      (map (lambda (x) (cons x #t))
+                           (ps/required pspec))
+                      (map (lambda (x) (cons x #t))
+                           (ps/defaults pspec)))))
+         (default/all
+    (append
+     default/on
+     (map (lambda (x) (if (not (member? (cons x #t) default/on))
+                     (cons x #f)))
+          (ps/all-parameters pspec))))
+         (default/syms (map car default/all)))
+    (if (not (eq? default/syms
+                  (delete-duplicates default/syms)))
+        (begin
+          (throw 'bad! default/syms)
+          '())
+        default/all)))
+  
+(define (ps/override-plist pspec plist)
+  ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)
+  ;; B: OFF[(DIFF PSPEC/ALL A)]
+  ;; A + B
+  (let* ((all-p (ps/all-parameters pspec))
+         (plist/sym (map car plist))
+         (override/a (apply append
+                            (map (lambda (x) (if (member (car x) all-p) x))
+                                 plist)
+                            (map (lambda (x) (if (not (member (car x) plist/sym)) x))
+                                 (ps/base-parameter-alist pspec)))))
+    (append
+     override/a
+     (map (lambda (x) (if (not (member x override/a)) (cons x #f)))
+          all-p))))
+  
+(define (ps/validate-parameter-alist pspec plist) ; #t or #f
+  (define (validate/logic) ; defined as functions - want to call them individually
+    (let ((PLH (alist->hash-table plist)))
+      (fold (lambda (x y) (and x y)) #t
+            (apply append
+                   (map (lambda (x) (hash-ref PLH x))
+                        (ps/required pspec))
+                   (apply append
+                          (map (lambda (ls)
+                                 (> 2 (count #t
+                                             (map (lambda (x) (hash-ref PLH x))
+                                                  ls))))
+                               (ps/one-of pspec)))))))
+  (define (validate/duplicates)
+    (define (validate/not-there? x lst)
+      (if (not (member x lst))
+          (if (cdr lst)
+              (validate/not-there? (car lst) (cdr lst))
+              #t)
+          #f))
+    (validate/not-there? (map car plist)))
+  (define (validate/coverage)
+    (let ((all-p (ps/all-parameters pspec))
+          (alist-p (map car plist)))
+      (fold (lambda (x y) (and x y))
+            (map (lambda (x) (not (not (member x alist-p))))
+                 all-p))))
+  (cond ((not (validate/logic))
+         ;;; XXX: use raise/formatted-message instead of display
+         (begin (display "There is a logic error in the given list")
+                #f))
+        ((not (validate/coverage))
+         (begin (display "There is a coverage error: check the pipeline")
+                #f))
+        ((not (validate/duplicates))
+         (begin (display "There are duplicates in the given list")
+                 #f))
+        (else #t)))
+      
+(define (ps/resolve-parameter-alist pspec plist)) ; checks if plist works
+  ;; response: (#t . overriden-plist) if it works, (#f . (ps/parameter-alist pspec)) otherwise
+  ;; parameter-alist -> base-parameter-alist by default, but can be overriden
+  ;; this command can thus be chained
+
+;; DEFAULT: pspec_ default -> valid?: (validate default) -> default: valid? default | '()
+;; TRANSFORM -> PLIST
+;; -> R-PLIST: (intersect plist all) - (common plist defaults) + (uncommon plist defaults)
+;; -> valid?: (validate R-PLIST) -> pspec/parameter-alist: valid? R-PLIST pspec/parameter-alist
+
+
 (define-syntax p/if
   (syntax-rules ()
     [(p/if property exp)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (if (if (list? property)
                (member
                 #t
@@ -225,7 +318,7 @@
            (list exp)
            '()))]
     [(p/if property exp exp-else)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (if (if (list? property)
                (member
                 #t
@@ -238,7 +331,7 @@
 (define-syntax p/if-all
   (syntax-rules ()
     [(p/if-all property exp)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (if (if (list? property)
                (not (member
                      #f
@@ -248,7 +341,7 @@
            (list exp)
            '()))]
     [(p/if-all property exp exp-else)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (if (if (list? property)
                (not (member
                      #f
@@ -282,7 +375,7 @@
     [(_ (all clauses ...)) (begin clauses ...)]
     [(_ ((parameters ...)) rest ...) (p/match-any rest ...)]
     [(_ ((parameters ...) clauses ...) rest ...)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (begin
          (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                               (list parameters ...)))
@@ -311,7 +404,7 @@
     [(_ (all clauses ...)) (begin clauses ...)]
     [(_ ((parameters ...)) rest ...) (p/match-all rest ...)]
     [(_ ((parameters ...) clauses ...) rest ...)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                    (list parameters ...))))
@@ -329,7 +422,7 @@
     [(_ (all clauses ...)) (begin clauses ...)]
     [(_ ((parameters ...)) rest ...) (p/match-case-any rest ...)]
     [(_ ((parameters ...) clauses ...) rest ...)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                            (list parameters ...)))
            (begin clauses ...)
@@ -355,14 +448,14 @@
     [(_ (all clauses ...) rest ...) (begin (begin clauses ...) (p/match rest ...))]
     [(_ ((predicate parameters ...)) rest ...) (p/match rest ...)]
     [(_ ((all parameters ...) clauses ...) rest ...)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                    (list parameters ...))))
               (begin clauses ...))
          (p/match rest ...)))]
     [(_ ((any parameters ...) clauses ...) rest ...)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (begin
          (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                               (list parameters ...)))
@@ -382,13 +475,13 @@
     [(_ (all clauses ...) rest ...) (begin clauses ...)]
     [(_ ((predicate parameters ...)) rest ...) (p/match-case rest ...)]
     [(_ ((all parameters ...) clauses ...) rest ...)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (if (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                 (list parameters ...))))
            (begin clauses ...)
            (p/match-case rest ...)))]
     [(_ ((any parameters ...) clauses ...) rest ...)
-     (let ((properties (package-properties this-package)))
+     (let ((properties (ps/parameter-alist this-package)))
        (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                            (list parameters ...)))
            (begin clauses ...)
