@@ -1,4 +1,6 @@
 (define-module (DRAFTS test-packages)
+  #:use-module (gnu packages base)
+  #:use-module (guix parameters)
   #:use-module (guix packages)
   #:use-module (guix records)
   #:use-module (guix diagnostics)
@@ -15,37 +17,56 @@
     (inherit hello)
     (name "hello-parameterized")
     (properties
-     `(,(parameter-spec
+     `((parameter-spec . ,(parameter-spec
+                           ;; local -> optional by default
+                           ;; no other parameters to add to this example for now
+                           (local (list
+                                   (package-parameter
+                                    (name "nls!")
+                                    (transforms
+                                     '(((gnu-build-system) . ((with-configure-flag . "hello=--disable-nls"))))))))
+                           ;; in the future we want to automatically create (one-of x x!) if both exist
+                           (use-transforms '((nls! . #t))))))))
+
+hello-parameterized
+
+(define-public hello-no-nls
+  (package
+    (inherit hello)
+    (name "hello-no-nls")
+    (properties
+     `((parameter-spec . ,(parameter-spec
          ;; local -> optional by default
          ;; no other parameters to add to this example for now
          (local (list
                  (package-parameter
                   (name "nls!")
                   (transforms
-                   (list (gnu-build-system . ((with-configure-flag . "hello=--disable-nls"))))))))
+                   '(((gnu-build-system) . ((with-configure-flag . "hello=--disable-nls"))))))))
          ;; in the future we want to automatically create (one-of x x!) if both exist
-         (use-transforms (list (nls! . #t))))))))
+         (use-transforms '((nls! . #t)))
+         (defaults '(nls!))))))))
 
-(define-public test-package
-  (package
-    (inherit some-package)
-    (name "test-package-for-parameters")
-    (properties
-     `(,(parameter-spec
-         (local (list "xyz" ; "str" -> (package-parameter (name "str"))
-                      'abc ; 'sym -> (package-parameter (name 'sym))
-                      (package-parameter
-                       (name "uvw"))))
-         (global (list global-parameter)) ; all global parameters need to be declared
-         (defaults '(xyz)) ; we use syms to refer to parameters
-         (one-of '((xyz abc)))
-         (optional '(global-parameter)) ; all local parameters are optional by default
-         (use-transforms (list ; transforms will only be used for these
-                          ('uvw . ((with-configure-flag . "some-package=--some-flag")))
-                          (global-parameter . #t))))) ; it uses its default transform
-    (parameter/if (xyz abc)
-                  (modify-inputs (package-inputs some-package)
-                    (append libaaa))))))
+;; (define-public test-package
+;;   (package
+;;     (inherit some-package)
+;;     (name "test-package-for-parameters")
+;;     (properties
+;;      `(,(parameter-spec
+;;          (local (list "xyz" ; "str" -> (package-parameter (name "str"))
+;;                       'abc ; 'sym -> (package-parameter (name 'sym))
+;;                       (package-parameter
+;;                        (name "uvw"))))
+;;          (global (list global-parameter)) ; all global parameters need to be declared
+;;          (defaults '(xyz)) ; we use syms to refer to parameters
+;;          (one-of '((xyz abc)))
+;;          (optional '(global-parameter)) ; all local parameters are optional by default
+;;          (use-transforms (list ; transforms will only be used for these
+;;                           ('uvw . ((with-configure-flag . "some-package=--some-flag")))
+;;                           (global-parameter . #t))))) ; it uses its default transform
+;;     (parameter/if (xyz abc)
+;;                   (modify-inputs (package-inputs some-package)
+;;                     (append libaaa))))))
 
 ;; PARSER:
 ;; 3 phases

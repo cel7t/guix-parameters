@@ -32,9 +32,18 @@
   #:export (package-parameter
             parameter-type
             parameter-spec
-
             boolean
+
+            parameter-spec-property
             package-parameter-spec
+            ps/all-parameters
+            ps/base-parameter-alist
+            ps/override-alist
+            ps/validate-parameter-alist
+            ps/resolve-parameter-alist
+            %global-parameters
+            define-global-parameter
+            
             parameter/if
             parameter/if-all
             parameter/match-any
@@ -208,6 +217,12 @@
                             (raise (condition
                                     (&message (message "wrong value"))))))))))
 
+(define-syntax parameter-spec-property
+  (syntax-rules ()
+    [(parameter-spec-property body ...)
+     (cons 'parameter-spec
+           (parameter-spec body ...))]))
+
 (define (package-parameter-spec package)
   (or (assq-ref (package-properties package) 'parameter-spec)
       '()))
@@ -236,7 +251,7 @@
                             (ps/defaults pspec)))))
          (default/all (append
                        default/on
-                       (map (lambda (x) (if (not (member? (cons x #t) default/on))
+                       (map (lambda (x) (if (not (member (cons x #t) default/on))
                                        (cons x #f)))
                             (ps/all-parameters pspec))))
          (default/syms (map car default/all)))
@@ -247,7 +262,7 @@
           '())
         default/all)))
   
-(define (ps/override-plist pspec plist)
+(define (ps/override-alist pspec plist)
   ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)
   ;; B: OFF[(DIFF PSPEC/ALL A)]
   ;; A + B
@@ -283,11 +298,12 @@
               (validate/not-there? (car lst) (cdr lst))
               #t)
           #f))
-    (validate/not-there? (map car plist)))
+    (let ((alist-p (map car plist)))
+      (validate/not-there? (car alist-p) (cdr alist-p))))
   (define (validate/coverage)
     (let ((all-p (ps/all-parameters pspec))
           (alist-p (map car plist)))
-      (fold (lambda (x y) (and x y))
+      (fold (lambda (x y) (and x y)) #t
             (map (lambda (x) (not (not (member x alist-p))))
                  all-p))))
   (cond ((not (validate/logic))
@@ -311,7 +327,7 @@
 ;; TRANSFORM -> PLIST
 ;; -> R-PLIST: (intersect plist all) - (common plist defaults) + (uncommon plist defaults)
 ;; -> valid?: (validate R-PLIST) -> pspec/parameter-alist: valid? R-PLIST pspec/parameter-alist
-  (let ((olist (ps/override-plist pspec plist)))
+  (let ((olist (ps/override-alist pspec plist)))
     (if (ps/validate-parameter-alist pspec olist)
         (cons #t olist)
         (cons #f (ps/parameter-alist pspec)))))

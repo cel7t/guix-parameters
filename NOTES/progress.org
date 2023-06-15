@@ -24,3 +24,15 @@ Things to cover:
 ** Started looking into [[https://www.gnu.org/software/guile/manual/html_node/SRFI_002d9-Records.html][Record Types]] for parameters
 Advice from Ludo: wherever possible, use *concrete data structures* instead of S-Expressions
 I need to build record types for holding information about parameters and their configuration.
+* 6/16
+** Record types and parser functions are mostly complete
+** Debugging/testing is needed before work on transforms
+** The x! problem
+- if a parameter x exists, x! is its opposite
+- if x! isn't defined, take x! as (x . #f)
+- if x! is defined and x isn't, take x as (x! . #f)
+- very confusing to parse
+- need to update validation and processing functions to accommodate them
+** Scope for improvement: rewrite and modify-inputs
+- both see extensive use in package variant definition
+- could receive same treatment as transformations in the current parameter definition
