@@ -20,6 +20,7 @@
 (define-module (guix parameters)
   #:use-module (guix packages)
   #:use-module (guix records)
+  #:use-module (guix transformations)
   #:use-module (guix diagnostics)
   #:use-module (guix i18n)
   #:use-module (srfi srfi-1)
@@ -72,7 +73,7 @@
   ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
   ;; this is an alist, the parser will handle the special keyword `all` as applicable to all systems.
   (transforms    package-parameter-transforms
-                 (default #f) ; no transforms by default
+                 (default '((() . ()))) ; no transforms by default
                  (sanitize (lambda (val)
                              (if (and (list? val)
                                       (list? (car val)))
@@ -82,10 +83,16 @@
                                                      (options->transformation (cdr val))))
                                              (car val)))
                                  (throw 'bad! val)))))
+
+  ;; SCOPE FOR IMPROVEMENT:
+  ;; another field for package-input-rewriting called 'rewrite'
+  ;; consult Pjotr and Gabor about this
+  
   ;; ONLY TO BE USED IN LOCAL DEFINITIONS
   ;; if set to #t, parameter is considered default
-  (default? package-parameter-default? (default #f))
-  (description   package-parameter-description))
+  ;; 6/15: just use ps/defaults
+  ;; (default? package-parameter-default? (default #f))
+  (description   package-parameter-description (default "")))
 
 ;; Note that if a transform applies to all but a, b and c,
 ;; (case build-system
@@ -121,15 +128,19 @@
                          ls)
                     (throw 'bad! val))))
     (thunked))
-  (global ps/global ;; global parameters used must be declared
-          (default '())
-          (sanitizer (lambda (ls)
-                       (map (lambda (val) ; they must be package parameters
-                              (if (package-parameter? val)
-                                  val
-                                  (throw 'bad! val)))
-                            ls)))
-          (thunked))
+  ;; 6/15: Pjotr recommended using a global hash table instead.
+  ;;       See: (define-global-parameter), %global-parameters
+  ;;       Lines commented out due to this will have an 'x615' next to them
+  
+  ;; (global ps/global ;; global parameters used must be declared
+  ;;         (default '())
+  ;;         (sanitizer (lambda (ls)
+  ;;                      (map (lambda (val) ; they must be package parameters
+  ;;                             (if (package-parameter? val)
+  ;;                                 val
+  ;;                                 (throw 'bad! val)))
+  ;;                           ls)))
+  ;;         (thunked))
   (defaults ps/defaults
     (default '())
     (thunked))
@@ -174,10 +185,7 @@
                   (thunked))
   (parameter-alist ps/parameter-alist ;; this is ultimately what will be transformed by --with-parameters
                    ;; '((a . #t) (b . #f) ...)
-                   (default (map (lambda (x) (if (member? x ps/defaults)
-                                            (cons x #t)
-                                            (cons x #f)))
-                                 (ps/all-parameters this-parameter-spec)))
+                   (default (ps/base-parameter-alist this-parameter-spec)) ; if this doesn't work some tricks might be needed
                    (thunked)))
 
 ;; g23: Most parameters should be boolean
@@ -210,8 +218,9 @@
    (append
     (map (lambda (x) (package-parameter-name x))
          (ps/local pspec))
-    (map (lambda (x) (package-parameter-name x))
-         (ps/global pspec))
+    ;; x615
+    ;; (map (lambda (x) (package-parameter-name x))
+    ;;      (ps/global pspec))
     (ps/defaults pspec)
     (ps/required pspec)
     (apply append (ps/one-of pspec))
@@ -220,17 +229,16 @@
 (define (ps/base-parameter-alist pspec) ; returns base case
   ;; '((a . #t) (b . #f) ...)
   (let* ((default/on (delete-duplicates
-                     (append
-                      (map (lambda (x) (cons x #t))
-                           (ps/required pspec))
-                      (map (lambda (x) (cons x #t))
-                           (ps/defaults pspec)))))
-         (default/all
-    (append
-     default/on
-     (map (lambda (x) (if (not (member? (cons x #t) default/on))
-                     (cons x #f)))
-          (ps/all-parameters pspec))))
+                      (append
+                       (map (lambda (x) (cons x #t))
+                            (ps/required pspec))
+                       (map (lambda (x) (cons x #t))
+                            (ps/defaults pspec)))))
+         (default/all (append
+                       default/on
+                       (map (lambda (x) (if (not (member? (cons x #t) default/on))
+                                       (cons x #f)))
+                            (ps/all-parameters pspec))))
          (default/syms (map car default/all)))
     (if (not (eq? default/syms
                   (delete-duplicates default/syms)))
@@ -294,7 +302,7 @@
                  #f))
         (else #t)))
       
-(define (ps/resolve-parameter-alist pspec plist)) ; checks if plist works
+(define (ps/resolve-parameter-alist pspec plist) ; checks if plist works
   ;; response: (#t . overriden-plist) if it works, (#f . (ps/parameter-alist pspec)) otherwise
   ;; parameter-alist -> base-parameter-alist by default, but can be overriden
   ;; this command can thus be chained
@@ -303,7 +311,28 @@
 ;; TRANSFORM -> PLIST
 ;; -> R-PLIST: (intersect plist all) - (common plist defaults) + (uncommon plist defaults)
 ;; -> valid?: (validate R-PLIST) -> pspec/parameter-alist: valid? R-PLIST pspec/parameter-alist
+  (let ((olist (ps/override-plist pspec plist)))
+    (if (ps/validate-parameter-alist pspec olist)
+        (cons #t olist)
+        (cons #f (ps/parameter-alist pspec)))))
 
+;; %global-parameters: hash table containing global parameters ref'd by syms
+
+(define %global-parameters
+  (alist->hash-table '()))
+
+(define-syntax define-global-parameter
+  (syntax-rules ()
+    [(define-global-parameter (parameter-definition ...))
+     (let ((gp-val (parameter-definition ...)))
+       (hash-set! %global-parameters
+                  (package-parameter-name gp-val)
+                  gp-val))]))
+
+;; (define-global-parameter (package-parameter
+;;                           (name "tests!")
+;;                           (description "no tests")))
+;; Works!
 
 (define-syntax p/if
   (syntax-rules ()
