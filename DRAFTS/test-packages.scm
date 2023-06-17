@@ -30,6 +30,18 @@
 
 hello-parameterized
 
+(make-parameter-spec
+ (parameter-spec
+                           ;; local -> optional by default
+                           ;; no other parameters to add to this example for now
+                           (local (list
+                                   (package-parameter
+                                    (name "nls!")
+                                    (transforms
+                                     '(((gnu-build-system) . ((with-configure-flag . "hello=--disable-nls"))))))))
+                           ;; in the future we want to automatically create (one-of x x!) if both exist
+                           (use-transforms '((nls! . #t)))))
+
 (define-public hello-no-nls
   (package
     (inherit hello)

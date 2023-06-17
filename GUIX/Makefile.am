@@ -271,7 +271,7 @@ MODULES =					\
   guix/build/make-bootstrap.scm			\
   guix/search-paths.scm				\
   guix/packages.scm				\
-  guix/parameters.scm                           \ # g23
+  guix/parameters.scm                           \
   guix/import/cabal.scm				\
   guix/import/cpan.scm				\
   guix/import/cran.scm				\

@@ -86,7 +86,7 @@
                  (sanitize (lambda (val)
                              (if (and (list? val)
                                       (list? (car val)))
-                                 (apply append
+                                 (list
                                         (map (lambda (x)
                                                (cons x
                                                      (options->transformation (cdr val))))
@@ -131,11 +131,11 @@
                 (if (list? ls)
                     (map (lambda (val)
                            (cond ((package-parameter? val) val)
-                                 ((string? val) (package-parameter (name val)))
-                                 ((symbol? val) (package-parameter (name (symbol->string val))))
+                                 ((symbol? val) (package-parameter (name val)))
+                                 ((string? val) (package-parameter (name (string->symbol val))))
                                  (else (throw 'bad! val))))
                          ls)
-                    (throw 'bad! val))))
+                    (throw 'bad! ls))))
     (thunked))
   ;; 6/15: Pjotr recommended using a global hash table instead.
   ;;       See: (define-global-parameter), %global-parameters
@@ -157,7 +157,7 @@
             (default '())
             (thunked)) 
   (optional ps/optional
-            (default (map (lambda (x) (package-parameter-name x)) ps/local))
+            (default '()) ; 6/16: causing problems with ps/all-parameters
             ;; 6/13: removed the sanitizer as merging local and optional
             ;;       should be handled by the parser instead.
             (thunked))
@@ -173,7 +173,7 @@
                   (default '())
                   (sanitize (lambda (ls)
                               (if (list? ls)
-                                  (map (lambda (xc)
+                                  (map (lambda (x)
                                          (if (eqv? #t (cdr x))
                                              (cond
                                               ((package-parameter? (car x))
@@ -181,16 +181,16 @@
                                                      (package-parameter-transforms (car x))))
                                               ((symbol? (car x))
                                                (cons (car x)
-                                                     (find (lambda (g) (evq? (car x)
+                                                     (find (lambda (g) (eqv? (car x)
                                                                         (package-parameter-name g)))
                                                            ps/local)))
                                               ((string? (car x))
                                                (cons (string->symbol (car x))
-                                                     (find (lambda (g) (evq? (string->symbol (car x))
+                                                     (find (lambda (g) (eqv? (string->symbol (car x))
                                                                         (package-parameter-name g)))
                                                            ps/local))))))
                                        ls)
-                                  (throw 'bad! val))))
+                                  (throw 'bad! ls))))
                   (thunked))
   (parameter-alist ps/parameter-alist ;; this is ultimately what will be transformed by --with-parameters
                    ;; '((a . #t) (b . #f) ...)
