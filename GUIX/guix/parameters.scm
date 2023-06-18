@@ -1,7 +1,7 @@
 ;;; GNU Guix --- Functional package management for GNU
 ;;; Copyright © 2020 Ludovic Courtès <ludo@gnu.org>
 ;;; Copyright © 2023 Sarthak Shah <shahsarthakw@gmail.com>
-;;; 
+;;;
 ;;; This file is part of GNU Guix.
 ;;;
 ;;; GNU Guix is free software; you can redistribute it and/or modify it
@@ -43,7 +43,8 @@
             ps/resolve-parameter-alist
             %global-parameters
             define-global-parameter
-            
+
+            parameter-spec-parameter-alist
             parameter/if
             parameter/if-all
             parameter/match-any
@@ -72,42 +73,24 @@
   make-package-parameter
   package-parameter?
   (name          package-parameter-name
-                 (sanitize (lambda (x)
-                             (cond
-                              ((string? x) (string->symbol x))
-                              ((symbol? x) x)
-                              (else (throw 'bad! x))))))
+                 (sanitize sanitize-string-or-symbol))
   (type          package-parameter-type (default boolean))
   ;; the standard transforms; of the form (list ((build-system ...) transform))
   ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
   ;; this is an alist, the parser will handle the special keyword `all` as applicable to all systems.
   (transforms    package-parameter-transforms
-                 (default '((() . ()))) ; no transforms by default
-                 (sanitize (lambda (val)
-                             (if (and (list? val)
-                                      (list? (car val)))
-                                 (list
-                                        (map (lambda (x)
-                                               (cons x
-                                                     (options->transformation (cdr val))))
-                                             (car val)))
-                                 (throw 'bad! val)))))
+                 (default (alist->hash-table '()))
+                 (sanitize sanitize-build-system-transforms))
 
   ;; SCOPE FOR IMPROVEMENT:
   ;; another field for package-input-rewriting called 'rewrite'
   ;; consult Pjotr and Gabor about this
-  
+
   ;; ONLY TO BE USED IN LOCAL DEFINITIONS
   ;; if set to #t, parameter is considered default
   ;; 6/15: just use ps/defaults
   ;; (default? package-parameter-default? (default #f))
   (description   package-parameter-description (default "")))
-
-;; Note that if a transform applies to all but a, b and c,
-;; (case build-system
-;;  ((a b c) error-out)
-;;  (else do-something))
-;; works
 
 ;; Type of a package parameter.
 (define-record-type* <parameter-type> parameter-type
@@ -118,6 +101,66 @@
   (value->string parameter-type-value->string)
   (universe      parameter-type-universe))
 
+;; SANITIZERS
+
+(define (sanitize-string-or-symbol x)
+  (cond ((string? x) (string->symbol x))
+        ((symbol? x) x)
+        (else (throw 'bad! x))))
+
+(define (sanitize-build-system-transforms ls)
+  ;; ((a . t1 t2 ...) ((b c) t3 t4 ...))
+  (cond ((hash-table? ls) ls)
+        ((list? ls)
+         (alist->hash-table
+          (match ls
+            (((a ...) t ...)
+             (let ((ls-transforms (options->transformation t)))
+               (map (lambda (x) (cons x ls-transforms)) a)))
+            ((a t ...)
+             (let ((ls-transforms (options->transformation t)))
+               (cons a ls-transforms))))))
+        (else (throw 'bad! ls))))
+
+(define (local-sanitizer ls)
+  (if (list? ls)
+      (map (lambda (val)
+             (cond ((package-parameter? val) val)
+                   ((symbol? val) (package-parameter (name val)))
+                   ((string? val) (package-parameter (name (string->symbol val))))
+                   (else (throw 'bad! val))))
+           ls)
+      (throw 'bad! ls)))
+
+(define (transform-sanitizer lv)
+  (lambda (ls)
+    (if (list? ls)
+        (map (lambda (x)
+               (if (eqv? #t (cdr x))
+                   (cond
+                    ((package-parameter? (car x))
+                     (cons (package-parameter-name (car x))
+                           (package-parameter-transforms (car x))))
+                    ((symbol? (car x))
+                     (cons (car x)
+                           (or
+                            (find (lambda (g) (eqv? (car x)
+                                                    (package-parameter-name g)))
+                                  lv)
+                            (hash-ref %global-parameters (car x))
+                            (throw 'bad! (car x)))))
+                    ((string? (car x))
+                     (let ((y (string->symbol (car x))))
+                       (cons y
+                             (or
+                              (find (lambda (g) (eqv? y
+                                                      (package-parameter-name g)))
+                                    lv)
+                              (hash-ref %global-parameters y)
+                              (throw 'bad! y))))))))
+             ls)
+        (throw 'bad! ls))))
+
 ;; thunked -> we can do stuff like (parameter-spec-optional-parameters ps) to get the optional parameters
 (define-record-type* <parameter-spec> parameter-spec
   make-parameter-spec
@@ -127,20 +170,12 @@
   (local    ps/local
     ;; keeping it as an alist as it will be useful to retrieve them for the UI
     (default '())
-    (sanitize (lambda (ls)
-                (if (list? ls)
-                    (map (lambda (val)
-                           (cond ((package-parameter? val) val)
-                                 ((symbol? val) (package-parameter (name val)))
-                                 ((string? val) (package-parameter (name (string->symbol val))))
-                                 (else (throw 'bad! val))))
-                         ls)
-                    (throw 'bad! ls))))
+    (sanitize local-sanitizer)
     (thunked))
   ;; 6/15: Pjotr recommended using a global hash table instead.
   ;;       See: (define-global-parameter), %global-parameters
   ;;       Lines commented out due to this will have an 'x615' next to them
-  
+
   ;; (global ps/global ;; global parameters used must be declared
   ;;         (default '())
   ;;         (sanitizer (lambda (ls)
@@ -155,7 +190,7 @@
     (thunked))
   (required ps/required
             (default '())
-            (thunked)) 
+            (thunked))
   (optional ps/optional
             (default '()) ; 6/16: causing problems with ps/all-parameters
             ;; 6/13: removed the sanitizer as merging local and optional
@@ -171,26 +206,7 @@
              (thunked))
   (use-transforms ps/use-transforms ;; only use transforms for these
                   (default '())
-                  (sanitize (lambda (ls)
-                              (if (list? ls)
-                                  (map (lambda (x)
-                                         (if (eqv? #t (cdr x))
-                                             (cond
-                                              ((package-parameter? (car x))
-                                               (cons (package-parameter-name (car x))
-                                                     (package-parameter-transforms (car x))))
-                                              ((symbol? (car x))
-                                               (cons (car x)
-                                                     (find (lambda (g) (eqv? (car x)
-                                                                        (package-parameter-name g)))
-                                                           ps/local)))
-                                              ((string? (car x))
-                                               (cons (string->symbol (car x))
-                                                     (find (lambda (g) (eqv? (string->symbol (car x))
-                                                                        (package-parameter-name g)))
-                                                           ps/local))))))
-                                       ls)
-                                  (throw 'bad! ls))))
+                  (sanitize (transform-sanitizer parameter-spec-local))
                   (thunked))
   (parameter-alist ps/parameter-alist ;; this is ultimately what will be transformed by --with-parameters
                    ;; '((a . #t) (b . #f) ...)
@@ -202,16 +218,16 @@
 (define boolean
   ;; The Boolean parameter type.
   (parameter-type (name 'boolean)
-                  (universe '(#true #false))
+                  (universe '(#t #f))
                   (value->string
                    (match-lambda
-                     (#f "false")
-                     (#t "true")))
+                     (#f "off")
+                     (#t "on")))
                   (string->value
                    (lambda (str)
-                     (cond ((string-ci=? str "true")
+                     (cond ((string-ci=? str "on")
                             #t)
-                           ((string-ci=? str "false")
+                           ((string-ci=? str "off")
                             #f)
                            (else
                             (raise (condition
@@ -251,9 +267,10 @@
                             (ps/defaults pspec)))))
          (default/all (append
                        default/on
-                       (map (lambda (x) (if (not (member (cons x #t) default/on))
-                                       (cons x #f)))
-                            (ps/all-parameters pspec))))
+                       (map (lambda (x) (cons x #f))
+                            (filter (lambda (x) (not (member (cons x #t)
+                                                             default/on)))
+                                    (ps/all-parameters pspec)))))
          (default/syms (map car default/all)))
     (if (not (eq? default/syms
                   (delete-duplicates default/syms)))
@@ -261,7 +278,7 @@
           (throw 'bad! default/syms)
           '())
         default/all)))
-  
+
 (define (ps/override-alist pspec plist)
   ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)
   ;; B: OFF[(DIFF PSPEC/ALL A)]
@@ -269,15 +286,17 @@
   (let* ((all-p (ps/all-parameters pspec))
          (plist/sym (map car plist))
          (override/a (apply append
-                            (map (lambda (x) (if (member (car x) all-p) x))
-                                 plist)
-                            (map (lambda (x) (if (not (member (car x) plist/sym)) x))
-                                 (ps/base-parameter-alist pspec)))))
+                            (filter (lambda (x) (member (car x) all-p))
+                                    plist)
+                            (filter (lambda (x) (not (member (car x) plist/sym)))
+                                    (ps/base-parameter-alist pspec))))
+         (override/a-sym (map car override/a)))
     (append
      override/a
-     (map (lambda (x) (if (not (member x override/a)) (cons x #f)))
-          all-p))))
-  
+     (map (lambda (x) (cons x #f))
+          (filter (lambda (x) (not (member x override/a-sym)))
+                  all-p)))))
+
 (define (ps/validate-parameter-alist pspec plist) ; #t or #f
   (define (validate/logic) ; defined as functions - want to call them individually
     (let ((PLH (alist->hash-table plist)))
@@ -294,7 +313,7 @@
   (define (validate/duplicates)
     (define (validate/not-there? x lst)
       (if (not (member x lst))
-          (if (cdr lst)
+          (if (> (length lst) 1)
               (validate/not-there? (car lst) (cdr lst))
               #t)
           #f))
@@ -315,18 +334,18 @@
                 #f))
         ((not (validate/duplicates))
          (begin (display "There are duplicates in the given list")
-                 #f))
+                #f))
         (else #t)))
-      
+
 (define (ps/resolve-parameter-alist pspec plist) ; checks if plist works
   ;; response: (#t . overriden-plist) if it works, (#f . (ps/parameter-alist pspec)) otherwise
   ;; parameter-alist -> base-parameter-alist by default, but can be overriden
   ;; this command can thus be chained
 
-;; DEFAULT: pspec_ default -> valid?: (validate default) -> default: valid? default | '()
-;; TRANSFORM -> PLIST
-;; -> R-PLIST: (intersect plist all) - (common plist defaults) + (uncommon plist defaults)
-;; -> valid?: (validate R-PLIST) -> pspec/parameter-alist: valid? R-PLIST pspec/parameter-alist
+  ;; DEFAULT: pspec_ default -> valid?: (validate default) -> default: valid? default | '()
+  ;; TRANSFORM -> PLIST
+  ;; -> R-PLIST: (intersect plist all) - (common plist defaults) + (uncommon plist defaults)
+  ;; -> valid?: (validate R-PLIST) -> pspec/parameter-alist: valid? R-PLIST pspec/parameter-alist
   (let ((olist (ps/override-alist pspec plist)))
     (if (ps/validate-parameter-alist pspec olist)
         (cons #t olist)
@@ -349,6 +368,9 @@
 ;;                           (name "tests!")
 ;;                           (description "no tests")))
 ;; Works!
+
+(define (parameter-spec-parameter-alist pspec)
+  (ps/parameter-alist pspec))
 
 (define-syntax p/if
   (syntax-rules ()
