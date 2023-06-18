@@ -21,6 +21,7 @@
   #:use-module (guix packages)
   #:use-module (guix records)
   #:use-module (guix transformations)
+  #:use-module (guix profiles)
   #:use-module (guix diagnostics)
   #:use-module (guix i18n)
   #:use-module (srfi srfi-1)
@@ -34,17 +35,20 @@
             parameter-spec
             boolean
 
+            build-system/transform
+            build-system/transform-match
             parameter-spec-property
             package-parameter-spec
-            ps/all-parameters
-            ps/base-parameter-alist
-            ps/override-alist
-            ps/validate-parameter-alist
-            ps/resolve-parameter-alist
+            parameter-spec/all-parameters
+            parameter-spec/base-parameter-alist
+            parameter-spec/override-alist
+            parameter-spec/validate-parameter-alist
+            parameter-spec/resolve-parameter-alist
             %global-parameters
             define-global-parameter
 
-            parameter-spec-parameter-alist
+            package-with-parameters
+            parameter-spec/parameter-alist
             parameter/if
             parameter/if-all
             parameter/match-any
@@ -88,7 +92,7 @@
 
   ;; ONLY TO BE USED IN LOCAL DEFINITIONS
   ;; if set to #t, parameter is considered default
-  ;; 6/15: just use ps/defaults
+  ;; 6/15: just use parameter-spec/defaults
   ;; (default? package-parameter-default? (default #f))
   (description   package-parameter-description (default "")))
 
@@ -103,6 +107,9 @@
 
 ;; SANITIZERS
 
+(define %global-parameters
+  (alist->hash-table '()))
+
 (define (sanitize-string-or-symbol x)
   (cond ((string? x) (string->symbol x))
         ((symbol? x) x)
@@ -112,15 +119,40 @@
   ;; ((a . t1 t2 ...) ((b c) t3 t4 ...))
   (cond ((hash-table? ls) ls)
         ((list? ls)
-         (alist->hash-table
-          (match ls
-            (((a ...) t ...)
-             (let ((ls-transforms (options->transformation t)))
-               (map (lambda (x) (cons x ls-transforms)) a)))
-            ((a t ...)
-             (let ((ls-transforms (options->transformation t)))
-               (cons a ls-transforms))))))
+         (alist->hash-table ls))
         (else (throw 'bad! ls))))
+
+(define-syntax lots-of-cons->alist
+  (syntax-rules ()
+    ((_ (a . b))
+     (list (cons 'a b)))
+    ((_ (a . b) rest ...)
+     (cons (cons 'a b)
+           (lots-of-cons->alist rest ...)))))
+
+(define-syntax build-system/transform
+  (syntax-rules (->) ;;  %)
+    ((_ (x ...) -> y ...)
+     (map (lambda (g) 
+            (cons g (lots-of-cons->alist y ...))) 
+          (list x ...)))
+    ;; unfortunately doesn't work: this-package is not available
+    ;; ((_ % -> y ...) ; for local parameter definitions
+    ;;  (cons (package-build-system this-package) 
+    ;;   (lots-of-cons->alist y ...)))
+    ((_ x -> y ...)
+     (cons x (lots-of-cons->alist y ...)))))
+
+(define-syntax build-system/transform-match
+  (syntax-rules ()
+    ((_ (x ...))
+     (list
+      (build-system/transform x ...)))
+    ((_ (x ...) rest ...)
+     (cons
+      (build-system/transform x ...)
+      (build-system/transform-match rest ...)))))
+
 
 (define (local-sanitizer ls)
   (if (list? ls)
@@ -143,12 +175,13 @@
                            (package-parameter-transforms (car x))))
                     ((symbol? (car x))
                      (cons (car x)
-                           (or
-                            (find (lambda (g) (eqv? (car x)
-                                                    (package-parameter-name g)))
-                                  lv)
-                            (hash-ref %global-parameters (car x))
-                            (throw 'bad! (car x)))))
+                           (package-parameter-transforms
+                            (or
+                             (find (lambda (g) (eqv? (car x)
+                                                     (package-parameter-name g)))
+                                   lv)
+                             (hash-ref %global-parameters (car x))
+                             (throw 'bad! (car x))))))
                     ((string? (car x))
                      (let ((y (string->symbol (car x))))
                        (cons y
@@ -157,7 +190,8 @@
                                                       (package-parameter-name g)))
                                     lv)
                               (hash-ref %global-parameters y)
-                              (throw 'bad! y))))))))
+                              (throw 'bad! y))))))
+                   x))
              ls)
         (throw 'bad! ls))))
 
@@ -167,7 +201,7 @@
   parameter-spec?
   this-parameter-spec
   ;; local-parameters: parameters specific to the package
-  (local    ps/local
+  (local    parameter-spec/local
     ;; keeping it as an alist as it will be useful to retrieve them for the UI
     (default '())
     (sanitize local-sanitizer)
@@ -176,7 +210,7 @@
   ;;       See: (define-global-parameter), %global-parameters
   ;;       Lines commented out due to this will have an 'x615' next to them
 
-  ;; (global ps/global ;; global parameters used must be declared
+  ;; (global parameter-spec/global ;; global parameters used must be declared
   ;;         (default '())
   ;;         (sanitizer (lambda (ls)
   ;;                      (map (lambda (val) ; they must be package parameters
@@ -185,32 +219,32 @@
   ;;                                 (throw 'bad! val)))
   ;;                           ls)))
   ;;         (thunked))
-  (defaults ps/defaults
+  (defaults parameter-spec/defaults
     (default '())
     (thunked))
-  (required ps/required
+  (required parameter-spec/required
             (default '())
             (thunked))
-  (optional ps/optional
-            (default '()) ; 6/16: causing problems with ps/all-parameters
+  (optional parameter-spec/optional
+            (default '()) ; 6/16: causing problems with parameter-spec/all-parameters
             ;; 6/13: removed the sanitizer as merging local and optional
             ;;       should be handled by the parser instead.
             (thunked))
   ;; XXX: automatically create (x x!) if both are defined
   ;; 6/12: this will be handled by the parser
-  (one-of ps/one-of
+  (one-of parameter-spec/one-of
           (default '())
           (thunked))
-  (canonical ps/canonical-combinations
-             (default ps/defaults)
+  (canonical parameter-spec/canonical-combinations
+             (default parameter-spec/defaults)
              (thunked))
-  (use-transforms ps/use-transforms ;; only use transforms for these
+  (use-transforms parameter-spec/use-transforms ;; only use transforms for these
                   (default '())
-                  (sanitize (transform-sanitizer parameter-spec-local))
+                  (sanitize (transform-sanitizer (parameter-spec/local this-parameter-spec)))
                   (thunked))
-  (parameter-alist ps/parameter-alist ;; this is ultimately what will be transformed by --with-parameters
+  (parameter-alist parameter-spec/parameter-alist ;; this is ultimately what will be transformed by --with-parameters
                    ;; '((a . #t) (b . #f) ...)
-                   (default (ps/base-parameter-alist this-parameter-spec)) ; if this doesn't work some tricks might be needed
+                   (default (parameter-spec/base-parameter-alist this-parameter-spec)) ; if this doesn't work some tricks might be needed
                    (thunked)))
 
 ;; g23: Most parameters should be boolean
@@ -239,38 +273,56 @@
      (cons 'parameter-spec
            (parameter-spec body ...))]))
 
+(define-syntax package-with-parameters
+  (syntax-rules ()
+    [(package-with-parameters body ...)
+     (let ((the-package (package body ...)))
+       ((options->transformation
+         (apply append
+                (let ((the-build-system (package-build-system the-package)))
+                  (map (lambda (x) 
+                         (hash-ref
+                          (assq-ref (parameter-spec/use-transforms 
+                                     (package-parameter-spec the-package))
+                                    (car x))
+                          the-build-system))
+                       (filter (lambda (x) (eqv? #t (cdr x)))
+                               (parameter-spec/parameter-alist
+                                (package-parameter-spec the-package)))))))
+        the-package))]))
+
 (define (package-parameter-spec package)
   (or (assq-ref (package-properties package) 'parameter-spec)
       '()))
 
-(define (ps/all-parameters pspec) ; for the UI
+(define (parameter-spec/all-parameters pspec) ; for the UI
   ;; '(sym-a sym-b ...)
   (delete-duplicates
    (append
     (map (lambda (x) (package-parameter-name x))
-         (ps/local pspec))
+         (parameter-spec/local pspec))
     ;; x615
     ;; (map (lambda (x) (package-parameter-name x))
-    ;;      (ps/global pspec))
-    (ps/defaults pspec)
-    (ps/required pspec)
-    (apply append (ps/one-of pspec))
-    (ps/optional pspec))))
+    ;;      (parameter-spec/global pspec))
+    (parameter-spec/defaults pspec)
+    (parameter-spec/required pspec)
+    (apply append (parameter-spec/one-of pspec))
+    (parameter-spec/optional pspec))))
 
-(define (ps/base-parameter-alist pspec) ; returns base case
+(define (parameter-spec/base-parameter-alist pspec) ; returns base case
   ;; '((a . #t) (b . #f) ...)
   (let* ((default/on (delete-duplicates
                       (append
                        (map (lambda (x) (cons x #t))
-                            (ps/required pspec))
+                            (parameter-spec/required pspec))
                        (map (lambda (x) (cons x #t))
-                            (ps/defaults pspec)))))
+                            (parameter-spec/defaults pspec)))))
          (default/all (append
                        default/on
                        (map (lambda (x) (cons x #f))
                             (filter (lambda (x) (not (member (cons x #t)
                                                              default/on)))
-                                    (ps/all-parameters pspec)))))
+                                    (parameter-spec/all-parameters pspec)))))
          (default/syms (map car default/all)))
     (if (not (eq? default/syms
                   (delete-duplicates default/syms)))
@@ -279,17 +331,17 @@
           '())
         default/all)))
 
-(define (ps/override-alist pspec plist)
+(define (parameter-spec/override-alist pspec plist)
   ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)
   ;; B: OFF[(DIFF PSPEC/ALL A)]
   ;; A + B
-  (let* ((all-p (ps/all-parameters pspec))
+  (let* ((all-p (parameter-spec/all-parameters pspec))
          (plist/sym (map car plist))
-         (override/a (apply append
-                            (filter (lambda (x) (member (car x) all-p))
-                                    plist)
-                            (filter (lambda (x) (not (member (car x) plist/sym)))
-                                    (ps/base-parameter-alist pspec))))
+         (override/a (append
+                      (filter (lambda (x) (member (car x) all-p))
+                              plist)
+                      (filter (lambda (x) (not (member (car x) plist/sym)))
+                              (parameter-spec/base-parameter-alist pspec))))
          (override/a-sym (map car override/a)))
     (append
      override/a
@@ -297,19 +349,20 @@
           (filter (lambda (x) (not (member x override/a-sym)))
                   all-p)))))
 
-(define (ps/validate-parameter-alist pspec plist) ; #t or #f
+(define (parameter-spec/validate-parameter-alist pspec plist) ; #t or #f
   (define (validate/logic) ; defined as functions - want to call them individually
     (let ((PLH (alist->hash-table plist)))
       (fold (lambda (x y) (and x y)) #t
-            (apply append
-                   (map (lambda (x) (hash-ref PLH x))
-                        (ps/required pspec))
-                   (apply append
-                          (map (lambda (ls)
-                                 (> 2 (count #t
-                                             (map (lambda (x) (hash-ref PLH x))
-                                                  ls))))
-                               (ps/one-of pspec)))))))
+            (cons
+             (equal? (parameter-spec/required pspec)
+                     (filter (lambda (x) (hash-ref PLH x))
+                             (parameter-spec/required pspec)))
+             (append
+              (map (lambda (ls)
+                     (> 2 (length
+                           (filter (lambda (x) (hash-ref PLH x))
+                                   ls))))
+                   (parameter-spec/one-of pspec)))))))
   (define (validate/duplicates)
     (define (validate/not-there? x lst)
       (if (not (member x lst))
@@ -320,7 +373,7 @@
     (let ((alist-p (map car plist)))
       (validate/not-there? (car alist-p) (cdr alist-p))))
   (define (validate/coverage)
-    (let ((all-p (ps/all-parameters pspec))
+    (let ((all-p (parameter-spec/all-parameters pspec))
           (alist-p (map car plist)))
       (fold (lambda (x y) (and x y)) #t
             (map (lambda (x) (not (not (member x alist-p))))
@@ -337,8 +390,8 @@
                 #f))
         (else #t)))
 
-(define (ps/resolve-parameter-alist pspec plist) ; checks if plist works
-  ;; response: (#t . overriden-plist) if it works, (#f . (ps/parameter-alist pspec)) otherwise
+(define (parameter-spec/resolve-parameter-alist pspec plist) ; checks if plist works
+  ;; response: (#t . overriden-plist) if it works, (#f . (parameter-spec/parameter-alist pspec)) otherwise
   ;; parameter-alist -> base-parameter-alist by default, but can be overriden
   ;; this command can thus be chained
 
@@ -346,15 +399,12 @@
   ;; TRANSFORM -> PLIST
   ;; -> R-PLIST: (intersect plist all) - (common plist defaults) + (uncommon plist defaults)
   ;; -> valid?: (validate R-PLIST) -> pspec/parameter-alist: valid? R-PLIST pspec/parameter-alist
-  (let ((olist (ps/override-alist pspec plist)))
-    (if (ps/validate-parameter-alist pspec olist)
+  (let ((olist (parameter-spec/override-alist pspec plist)))
+    (if (parameter-spec/validate-parameter-alist pspec olist)
         (cons #t olist)
-        (cons #f (ps/parameter-alist pspec)))))
+        (cons #f (parameter-spec/parameter-alist pspec)))))
 
 ;; %global-parameters: hash table containing global parameters ref'd by syms
-
-(define %global-parameters
-  (alist->hash-table '()))
 
 (define-syntax define-global-parameter
   (syntax-rules ()
@@ -369,13 +419,10 @@
 ;;                           (description "no tests")))
 ;; Works!
 
-(define (parameter-spec-parameter-alist pspec)
-  (ps/parameter-alist pspec))
-
-(define-syntax p/if
+(define-syntax parameter/if
   (syntax-rules ()
-    [(p/if property exp)
-     (let ((properties (ps/parameter-alist this-package)))
+    [(parameter/if property exp)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (if (list? property)
                (member
                 #t
@@ -384,8 +431,8 @@
                (assq-ref properties property))
            (list exp)
            '()))]
-    [(p/if property exp exp-else)
-     (let ((properties (ps/parameter-alist this-package)))
+    [(parameter/if property exp exp-else)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (if (list? property)
                (member
                 #t
@@ -395,10 +442,10 @@
            (list exp)
            (list exp-else)))]))
 
-(define-syntax p/if-all
+(define-syntax parameter/if-all
   (syntax-rules ()
-    [(p/if-all property exp)
-     (let ((properties (ps/parameter-alist this-package)))
+    [(parameter/if-all property exp)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (if (list? property)
                (not (member
                      #f
@@ -407,8 +454,8 @@
                (assq-ref properties property))
            (list exp)
            '()))]
-    [(p/if-all property exp exp-else)
-     (let ((properties (ps/parameter-alist this-package)))
+    [(parameter/if-all property exp exp-else)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (if (list? property)
                (not (member
                      #f
@@ -422,35 +469,35 @@
 ;; (define (package-properties _) '((a . 1) (b . 2) (c . 3)))
 ;; (define this-package '())
 
-;; (p/if '(a b e)
+;; (parameter/if '(a b e)
 ;;       (display "YES")
 ;;       (display "NO"))
 
-;; (p/if-all '(a b e)
+;; (parameter/if-all '(a b e)
 ;;           (display "NO")
 ;;           (display "YES"))
 
-;; p/match-any:
-;; (p/match-any
+;; parameter/match-any:
+;; (parameter/match-any
 ;; ((a b) e1 e2 ..)
 ;; ((c) d1 d2 ..)
 ;; (else c1 c2 ...))
 
-(define-syntax p/match-any
+(define-syntax parameter/match-any
   (syntax-rules (all)
     [(_) '()]
     [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((parameters ...)) rest ...) (p/match-any rest ...)]
+    [(_ ((parameters ...)) rest ...) (parameter/match-any rest ...)]
     [(_ ((parameters ...) clauses ...) rest ...)
-     (let ((properties (ps/parameter-alist this-package)))
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                               (list parameters ...)))
               (begin clauses ...))
-         (p/match-any rest ...)))]))
+         (parameter/match-any rest ...)))]))
 
 ;; (let ((SOME_ALIST_FOR_THIS_EXAMPLE '()))
-;;   (p/match-any
+;;   (parameter/match-any
 ;;    (('a 'd)
 ;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(1) SOME_ALIST_FOR_THIS_EXAMPLE))
 ;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(2) SOME_ALIST_FOR_THIS_EXAMPLE)))
@@ -465,96 +512,96 @@
 ;; note that all is essentially useless, one can simply put the expression in all
 ;; outside the macro and it will work the same
 
-(define-syntax p/match-all
+(define-syntax parameter/match-all
   (syntax-rules (all)
     [(_) '()]
     [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((parameters ...)) rest ...) (p/match-all rest ...)]
+    [(_ ((parameters ...)) rest ...) (parameter/match-all rest ...)]
     [(_ ((parameters ...) clauses ...) rest ...)
-     (let ((properties (ps/parameter-alist this-package)))
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                    (list parameters ...))))
               (begin clauses ...))
-         (p/match-all rest ...)))]))
+         (parameter/match-all rest ...)))]))
 
-;; (p/match-all
+;; (parameter/match-all
 ;;  (('a 'b) (display "YES") (display "YES"))
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
 
-(define-syntax p/match-case-any
+(define-syntax parameter/match-case-any
   (syntax-rules (all)
     [(_) '()]
     [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((parameters ...)) rest ...) (p/match-case-any rest ...)]
+    [(_ ((parameters ...)) rest ...) (parameter/match-case-any rest ...)]
     [(_ ((parameters ...) clauses ...) rest ...)
-     (let ((properties (ps/parameter-alist this-package)))
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                            (list parameters ...)))
            (begin clauses ...)
-           (p/match-case-any rest ...)))]))
+           (parameter/match-case-any rest ...)))]))
 
 ;; should short-circuit at YESYES
-;; (p/match-case
+;; (parameter/match-case
 ;;  (('a 'b 'e) (display "YES") (display "YES"))
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
 
 
-;; p/match:
+;; parameter/match:
 ;; combine all and any into one
-;; (p/match
+;; (parameter/match
 ;;  ((any a b) ...)
 ;;  ((all a b c) ...)
 ;;  (all ...))
 
-(define-syntax p/match
+(define-syntax parameter/match
   (syntax-rules (all any)
     [(_) '()]
-    [(_ (all clauses ...) rest ...) (begin (begin clauses ...) (p/match rest ...))]
-    [(_ ((predicate parameters ...)) rest ...) (p/match rest ...)]
+    [(_ (all clauses ...) rest ...) (begin (begin clauses ...) (parameter/match rest ...))]
+    [(_ ((predicate parameters ...)) rest ...) (parameter/match rest ...)]
     [(_ ((all parameters ...) clauses ...) rest ...)
-     (let ((properties (ps/parameter-alist this-package)))
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                    (list parameters ...))))
               (begin clauses ...))
-         (p/match rest ...)))]
+         (parameter/match rest ...)))]
     [(_ ((any parameters ...) clauses ...) rest ...)
-     (let ((properties (ps/parameter-alist this-package)))
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                               (list parameters ...)))
               (begin clauses ...))
-         (p/match rest ...)))]))
+         (parameter/match rest ...)))]))
 
-;; (p/match
+;; (parameter/match
 ;;  ((all 'a 'b) (display "YES"))
 ;;  (all (display "YES"))
 ;;  ((any 'c 'e) (display "YES"))
 ;;  ((all 'a 'o) (display "NO"))
 ;;  (all (display "ALL")))
 
-(define-syntax p/match-case
+(define-syntax parameter/match-case
   (syntax-rules (all any)
     [(_) '()]
     [(_ (all clauses ...) rest ...) (begin clauses ...)]
-    [(_ ((predicate parameters ...)) rest ...) (p/match-case rest ...)]
+    [(_ ((predicate parameters ...)) rest ...) (parameter/match-case rest ...)]
     [(_ ((all parameters ...) clauses ...) rest ...)
-     (let ((properties (ps/parameter-alist this-package)))
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                 (list parameters ...))))
            (begin clauses ...)
-           (p/match-case rest ...)))]
+           (parameter/match-case rest ...)))]
     [(_ ((any parameters ...) clauses ...) rest ...)
-     (let ((properties (ps/parameter-alist this-package)))
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                            (list parameters ...)))
            (begin clauses ...)
-           (p/match-case rest ...)))]))
+           (parameter/match-case rest ...)))]))
 
-;; (p/match-case
+;; (parameter/match-case
 ;;  ((all 'a 'f) (display "NO"))
 ;;  ;; (all (display "YES"))
 ;;  ;; ((any 'c 'e) (display "YES"))

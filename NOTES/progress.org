@@ -36,3 +36,7 @@ I need to build record types for holding information about parameters and their 
 ** Scope for improvement: rewrite and modify-inputs
 - both see extensive use in package variant definition
 - could receive same treatment as transformations in the current parameter definition
+* 6/19
+** Everything works now
+** package-with-parameters can be used to define a package with transforms required while defining
+** build-system/transform and build-system/transform-match exist now

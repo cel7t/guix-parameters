@@ -1,6 +1,7 @@
 (define-module (DRAFTS test-packages)
   #:use-module (gnu packages base)
   #:use-module (guix parameters)
+  #:use-module (guix build-system gnu)
   #:use-module (guix packages)
   #:use-module (guix records)
   #:use-module (guix diagnostics)
@@ -13,51 +14,24 @@
   #:use-module (ice-9 hash-table))
 
 (define-public hello-parameterized
-  (package
+  (package-with-parameters
     (inherit hello)
     (name "hello-parameterized")
     (properties
-     `((parameter-spec . ,(parameter-spec
+     `(,(parameter-spec-property
                            ;; local -> optional by default
                            ;; no other parameters to add to this example for now
                            (local (list
                                    (package-parameter
-                                    (name "nls!")
+                                    (name "git")
                                     (transforms
-                                     '(((gnu-build-system) . ((with-configure-flag . "hello=--disable-nls"))))))))
+                                     (build-system/transform-match
+                                       (gnu-build-system -> (with-git-url . "hello-parameterized=https://git.savannah.gnu.org/git/hello.git")))))))
                            ;; in the future we want to automatically create (one-of x x!) if both exist
-                           (use-transforms '((nls! . #t))))))))
+                           (defaults '(git))
+                           (use-transforms '((git . #t))))))))
 
 hello-parameterized
-
-(make-parameter-spec
- (parameter-spec
-                           ;; local -> optional by default
-                           ;; no other parameters to add to this example for now
-                           (local (list
-                                   (package-parameter
-                                    (name "nls!")
-                                    (transforms
-                                     '(((gnu-build-system) . ((with-configure-flag . "hello=--disable-nls"))))))))
-                           ;; in the future we want to automatically create (one-of x x!) if both exist
-                           (use-transforms '((nls! . #t)))))
-
-(define-public hello-no-nls
-  (package
-    (inherit hello)
-    (name "hello-no-nls")
-    (properties
-     `((parameter-spec . ,(parameter-spec
-         ;; local -> optional by default
-         ;; no other parameters to add to this example for now
-         (local (list
-                 (package-parameter
-                  (name "nls!")
-                  (transforms
-                   '(((gnu-build-system) . ((with-configure-flag . "hello=--disable-nls"))))))))
-         ;; in the future we want to automatically create (one-of x x!) if both exist
-         (use-transforms '((nls! . #t)))
-         (defaults '(nls!))))))))
 
 ;; (define-public test-package
 ;;   (package
