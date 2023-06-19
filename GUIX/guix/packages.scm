@@ -128,6 +128,8 @@
             prepend                               ;syntactic keyword
             replace                               ;syntactic keyword
             modify-inputs
+            add-input-label  ; g23
+            replace-input  ; g23
 
             package-direct-sources
             package-transitive-sources

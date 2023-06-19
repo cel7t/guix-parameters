@@ -131,16 +131,15 @@
            (lots-of-cons->alist rest ...)))))
 
 (define-syntax build-system/transform
-  (syntax-rules (->) ;;  %)
-    ((_ (x ...) -> y ...)
+  (syntax-rules (-> _)
+    ((build-system/transform (x ...) -> y ...)
      (map (lambda (g) 
             (cons g (lots-of-cons->alist y ...))) 
           (list x ...)))
-    ;; unfortunately doesn't work: this-package is not available
-    ;; ((_ % -> y ...) ; for local parameter definitions
-    ;;  (cons (package-build-system this-package) 
-    ;;   (lots-of-cons->alist y ...)))
-    ((_ x -> y ...)
+    ((build-system/transform _ -> y ...) ; for local parameter definitions
+     (cons 'any ; matches any build system
+      (lots-of-cons->alist y ...)))
+    ((build-system/transform x -> y ...)
      (cons x (lots-of-cons->alist y ...)))))
 
 (define-syntax build-system/transform-match
@@ -152,7 +151,6 @@
      (cons
       (build-system/transform x ...)
       (build-system/transform-match rest ...)))))
-
 
 (define (local-sanitizer ls)
   (if (list? ls)
@@ -273,6 +271,12 @@
      (cons 'parameter-spec
            (parameter-spec body ...))]))
 
+(define (transform-for-build-system parameter-transforms the-build-system)
+  (or (hash-ref parameter-transforms the-build-system)
+      (hash-ref parameter-transforms 'any)
+      (throw 'bad! the-build-system)))
+    
+
 (define-syntax package-with-parameters
   (syntax-rules ()
     [(package-with-parameters body ...)
@@ -281,7 +285,7 @@
          (apply append
                 (let ((the-build-system (package-build-system the-package)))
                   (map (lambda (x) 
-                         (hash-ref
+                         (transform-for-build-system
                           (assq-ref (parameter-spec/use-transforms 
                                      (package-parameter-spec the-package))
                                     (car x))
@@ -429,7 +433,7 @@
                 (map (lambda (x) (not (not (assq-ref properties x))))
                      property))
                (assq-ref properties property))
-           (list exp)
+            exp
            '()))]
     [(parameter/if property exp exp-else)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
@@ -439,8 +443,8 @@
                 (map (lambda (x) (not (not (assq-ref properties x))))
                      property))
                (assq-ref properties property))
-           (list exp)
-           (list exp-else)))]))
+           exp
+           exp-else))]))
 
 (define-syntax parameter/if-all
   (syntax-rules ()
@@ -452,7 +456,7 @@
                      (map (lambda (x) (not (not (assq-ref properties x))))
                           property)))
                (assq-ref properties property))
-           (list exp)
+           exp
            '()))]
     [(parameter/if-all property exp exp-else)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
@@ -462,16 +466,17 @@
                      (map (lambda (x) (not (not (assq-ref properties x))))
                           property)))
                (assq-ref properties property))
-           (list exp)
-           (list exp-else)))]))
+           exp
+           exp-else))]))
 
 ;; Test these macros without using packages:
-;; (define (package-properties _) '((a . 1) (b . 2) (c . 3)))
+;; (define (parameter-spec/parameter-alist _) '((a . 1) (b . 2) (c . 3)))
+;; (define (package-parameter-spec _) #t)
 ;; (define this-package '())
 
 ;; (parameter/if '(a b e)
-;;       (display "YES")
-;;       (display "NO"))
+;;       "YES"
+;;       "NO")
 
 ;; (parameter/if-all '(a b e)
 ;;           (display "NO")
@@ -608,7 +613,69 @@
 ;;  ;; ((all 'a 'b) (display "YES"))
 ;;  (all (display "ALL")))
 
-;; problem: given a symbol, we want to find the associated global parameter
-;; solution:
-;;   1. have all global parameters defined in one place
-;;   2. define %global-package-parameters as a hash with sym keys
+(define-syntax parameter/modifier-if
+  (syntax-rules (_ and delete prepend append replace)
+    [(% _ exp exp2)
+     exp]
+    [(% (and parameters ...) exp exp2)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (if (member #t
+                   (map (lambda (x) (not (not (assq-ref properties x))))
+                        (list parameters ...)))
+           exp
+           exp2))]
+    [(% (and parameter) exp exp2)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (if (assq-ref properties parameter))
+       exp
+       exp-else)]
+    [(% parameter exp exp2)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (if (if (list? parameter)
+               (member
+                #t
+                (map (lambda (x) (not (not (assq-ref properties x))))
+                     parameter))
+               (assq-ref properties parameter))
+           exp
+           exp2))]))
+
+(define-syntax parameter/modify-inputs
+  (syntax-rules (_ and delete prepend append replace)
+    [(% inputs (parameter (delete name)) clauses ...)
+     (parameter/modify-inputs
+      (parameter/modifier-if
+       parameter
+       (alist-delete name inputs)
+       inputs)
+      clauses ...)]
+    [(% inputs (parameter (delete names ...)) clauses ...)
+     (parameter/modify-inputs
+      (parameter/modifier-if
+       parameter
+       (fold alist-delete inputs (list names ...))
+       inputs)
+      clauses ...)]                        
+    [(% inputs (parameter (prepend lst ...)) clauses ...)
+     (parameter/modify-inputs
+      (parameter/modifier-if
+       parameter
+       (append (map add-input-label (list lst ...)) inputs)
+       inputs)
+      clauses ...)]                                                 
+    [(% inputs (parameter (append lst ...)) clauses ...)
+     (parameter/modify-inputs
+      (parameter/modifier-if
+       parameter
+       (append inputs (map add-input-label (list lst ...)))
+       inputs)
+      clauses ...)]                                                
+    [(% inputs (parameter (replace name replacement)) clauses ...)
+     (parameter/modify-inputs
+      (parameter/modifier-if
+       parameter
+       (replace-input name replacement inputs)
+       inputs)
+      clauses ...)]
+    [(% inputs)
+     inputs]))
