@@ -55,7 +55,8 @@
             parameter/match-all
             parameter/match-case-any
             parameter/match
-            parameter/match-case))
+            parameter/match-case
+            parameter/modify-inputs))
 
 ;;; Commentary:
 ;;;
@@ -133,8 +134,8 @@
 (define-syntax build-system/transform
   (syntax-rules (-> _)
     ((build-system/transform (x ...) -> y ...)
-     (map (lambda (g) 
-            (cons g (lots-of-cons->alist y ...))) 
+     (map (lambda (g)
+            (cons g (lots-of-cons->alist y ...)))
           (list x ...)))
     ((build-system/transform _ -> y ...) ; for local parameter definitions
      (cons 'any ; matches any build system
@@ -275,7 +276,7 @@
   (or (hash-ref parameter-transforms the-build-system)
       (hash-ref parameter-transforms 'any)
       (throw 'bad! the-build-system)))
-    
+
 
 (define-syntax package-with-parameters
   (syntax-rules ()
@@ -284,9 +285,9 @@
        ((options->transformation
          (apply append
                 (let ((the-build-system (package-build-system the-package)))
-                  (map (lambda (x) 
+                  (map (lambda (x)
                          (transform-for-build-system
-                          (assq-ref (parameter-spec/use-transforms 
+                          (assq-ref (parameter-spec/use-transforms
                                      (package-parameter-spec the-package))
                                     (car x))
                           the-build-system))
@@ -642,40 +643,47 @@
 
 (define-syntax parameter/modify-inputs
   (syntax-rules (_ and delete prepend append replace)
-    [(% inputs (parameter (delete name)) clauses ...)
+    [(% inputs (parameter) clauses ...)
+     (parameter/modify-inputs inputs clauses ...)]
+    [(% inputs (parameter (delete name) rest ...) clauses ...)
      (parameter/modify-inputs
       (parameter/modifier-if
        parameter
        (alist-delete name inputs)
        inputs)
+      (parameter rest ...)
       clauses ...)]
-    [(% inputs (parameter (delete names ...)) clauses ...)
+    [(% inputs (parameter (delete names ...) rest ...) clauses ...)
      (parameter/modify-inputs
       (parameter/modifier-if
        parameter
        (fold alist-delete inputs (list names ...))
        inputs)
-      clauses ...)]                        
-    [(% inputs (parameter (prepend lst ...)) clauses ...)
+      (parameter rest ...)
+      clauses ...)]
+    [(% inputs (parameter (prepend lst ...) rest ...) clauses ...)
      (parameter/modify-inputs
       (parameter/modifier-if
        parameter
        (append (map add-input-label (list lst ...)) inputs)
        inputs)
-      clauses ...)]                                                 
-    [(% inputs (parameter (append lst ...)) clauses ...)
+      (parameter rest ...)
+      clauses ...)]
+    [(% inputs (parameter (append lst ...) rest ...) clauses ...)
      (parameter/modify-inputs
       (parameter/modifier-if
        parameter
        (append inputs (map add-input-label (list lst ...)))
        inputs)
-      clauses ...)]                                                
-    [(% inputs (parameter (replace name replacement)) clauses ...)
+      (parameter rest ...)
+      clauses ...)]
+    [(% inputs (parameter (replace name replacement) rest ...) clauses ...)
      (parameter/modify-inputs
       (parameter/modifier-if
        parameter
        (replace-input name replacement inputs)
        inputs)
+      (parameter rest ...)
       clauses ...)]
     [(% inputs)
      inputs]))
