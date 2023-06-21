@@ -490,15 +490,21 @@
 ;; (else c1 c2 ...))
 
 (define-syntax parameter/match-any
-  (syntax-rules (all)
-    [(_) '()]
-    [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((parameters ...)) rest ...) (parameter/match-any rest ...)]
-    [(_ ((parameters ...) clauses ...) rest ...)
+  (syntax-rules (_)
+    [(%) '()]
+    [(% (_ clauses ...)) (begin clauses ...)]
+    [(% ((parameters ...)) rest ...) (parameter/match-any rest ...)]
+    [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                               (list parameters ...)))
+              (begin clauses ...))
+         (parameter/match-any rest ...)))]
+    [(% (parameter clauses ...) rest ...)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (begin
+         (and (not (not (assq-ref properties parameter)))
               (begin clauses ...))
          (parameter/match-any rest ...)))]))
 
@@ -519,15 +525,21 @@
 ;; outside the macro and it will work the same
 
 (define-syntax parameter/match-all
-  (syntax-rules (all)
-    [(_) '()]
-    [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((parameters ...)) rest ...) (parameter/match-all rest ...)]
-    [(_ ((parameters ...) clauses ...) rest ...)
+  (syntax-rules (_)
+    [(%) '()]
+    [(% (_ clauses ...)) (begin clauses ...)]
+    [(% ((parameters ...)) rest ...) (parameter/match-all rest ...)]
+    [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                    (list parameters ...))))
+              (begin clauses ...))
+         (parameter/match-all rest ...)))]
+    [(% (parameter clauses ...) rest ...)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (begin
+         (and (not (not (assq-ref properties parameter)))
               (begin clauses ...))
          (parameter/match-all rest ...)))]))
 
@@ -536,15 +548,20 @@
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
 
-(define-syntax parameter/match-case-any
-  (syntax-rules (all)
-    [(_) '()]
-    [(_ (all clauses ...)) (begin clauses ...)]
-    [(_ ((parameters ...)) rest ...) (parameter/match-case-any rest ...)]
-    [(_ ((parameters ...) clauses ...) rest ...)
+(define-syntax parameter/match-case-all
+  (syntax-rules ()
+    [(%) '()]
+    [(% (_ clauses ...)) (begin clauses ...)]
+    [(% ((parameters ...)) rest ...) (parameter/match-case-any rest ...)]
+    [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
-                           (list parameters ...)))
+       (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+                           (list parameters ...))))
+           (begin clauses ...)
+           (parameter/match-case-any rest ...)))]
+    [(% (parameter clauses ...) rest ...)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (and (not (not (assq-ref properties parameter)))
            (begin clauses ...)
            (parameter/match-case-any rest ...)))]))
 
@@ -563,47 +580,58 @@
 ;;  (all ...))
 
 (define-syntax parameter/match
-  (syntax-rules (all any)
-    [(_) '()]
-    [(_ (all clauses ...) rest ...) (begin (begin clauses ...) (parameter/match rest ...))]
-    [(_ ((predicate parameters ...)) rest ...) (parameter/match rest ...)]
-    [(_ ((all parameters ...) clauses ...) rest ...)
+  (syntax-rules (_ all)
+    [(%) '()]
+    [(% (_ clauses ...) rest ...) (begin (begin clauses ...) (parameter/match rest ...))]
+    [(% (parameters) rest ...) (parameter/match rest ...)]
+    [(% ((all parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                    (list parameters ...))))
               (begin clauses ...))
          (parameter/match rest ...)))]
-    [(_ ((any parameters ...) clauses ...) rest ...)
+    [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                               (list parameters ...)))
               (begin clauses ...))
+         (parameter/match rest ...)))]
+    [(% (parameter clauses ...) rest ...)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (begin
+         (and (not (not (assq-ref properties parameter)))
+              (begin clauses ...))
          (parameter/match rest ...)))]))
 
 ;; (parameter/match
 ;;  ((all 'a 'b) (display "YES"))
-;;  (all (display "YES"))
-;;  ((any 'c 'e) (display "YES"))
+;;  (_ (display "YES"))
+;;  (('c 'e) (display "YES"))
 ;;  ((all 'a 'o) (display "NO"))
-;;  (all (display "ALL")))
+;;  (_ (display "ALL")))
 
 (define-syntax parameter/match-case
-  (syntax-rules (all any)
-    [(_) '()]
-    [(_ (all clauses ...) rest ...) (begin clauses ...)]
-    [(_ ((predicate parameters ...)) rest ...) (parameter/match-case rest ...)]
-    [(_ ((all parameters ...) clauses ...) rest ...)
+  (syntax-rules (all _)
+    [(%) '()]
+    [(% (_ clauses ...) rest ...) (begin clauses ...)]
+    [(% (parameters) rest ...) (parameter/match-case rest ...)]
+    [(% ((all parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
                                 (list parameters ...))))
            (begin clauses ...)
            (parameter/match-case rest ...)))]
-    [(_ ((any parameters ...) clauses ...) rest ...)
+    [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
                            (list parameters ...)))
+           (begin clauses ...)
+           (parameter/match-case rest ...)))]
+    [(% (parameter clauses ...) rest ...)
+     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+       (if (not (not (assq-ref properties parameter)))
            (begin clauses ...)
            (parameter/match-case rest ...)))]))
 
@@ -615,17 +643,17 @@
 ;;  (all (display "ALL")))
 
 (define-syntax parameter/modifier-if
-  (syntax-rules (_ and delete prepend append replace)
+  (syntax-rules (_ all delete prepend append replace)
     [(% _ exp exp2)
      exp]
-    [(% (and parameters ...) exp exp2)
+    [(% (all parameters ...) exp exp2)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (member #t
                    (map (lambda (x) (not (not (assq-ref properties x))))
                         (list parameters ...)))
            exp
            exp2))]
-    [(% (and parameter) exp exp2)
+    [(% (all parameter) exp exp2)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (assq-ref properties parameter))
        exp
@@ -642,7 +670,7 @@
            exp2))]))
 
 (define-syntax parameter/modify-inputs
-  (syntax-rules (_ and delete prepend append replace)
+  (syntax-rules (_ all delete prepend append replace)
     [(% inputs (parameter) clauses ...)
      (parameter/modify-inputs inputs clauses ...)]
     [(% inputs (parameter (delete name) rest ...) clauses ...)
