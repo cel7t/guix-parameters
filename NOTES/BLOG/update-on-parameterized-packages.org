@@ -1,0 +1,113 @@
+#+TITLE:Parameterized Packages: An Update
+#+AUTHOR:Sarthak Shah
+I started work on adding [[https://guix.gnu.org/blog/2023/parameterized-packages-for-gnu-guix/][Parameterized Packages]] to GNU Guix 3 weeks ago, and this post is a short status update on the things I've done so far.
+* Summary of additions
+I have written
+- Record types for parameters
+- Processors for boolean, non-negative parameters
+- Macros for using parameters inside package definitions
+I started my work by writing draft parsers that acted on S-expressions, before moving on to records.
+The parameterization process follows 3 phases:
+1. Reading values from the parameter-spec record
+2. Resolving the values against user-input, and returning a final parameter list
+3. Applying transforms and macros in accordance with the final parameter list
+The parsers can currently resolve *boolean* and *non-negative* parameters.
+This means that parameters can either be *on* or *off*, and the parser does *not* automatically assume that /parameter!/ implies ~(not parameter)~. I am now working on adding support for enumerable parameters (i.e. parameters with multiple values which are not just on and off) and adding support for negation of boolean parameters.
+I next wrote Guix-style [[https://www.gnu.org/software/mit-scheme/documentation/stable/mit-scheme-ref/define_002drecord_002dtype-_0028SRFI-9_0029.html][record types]] for parameters, parameter types and parameter specification. I also wrote sanitizers and macros to make it convenient to input values in these records, as the code otherwise gets a bit boilerplate-y.
+I then ported the previously written parsers to these newly made records, and also wrote a few macros that let you use parameters inside special ~if~ and ~cond~-style expressions inside the package definition to have conditional options for fields depending on if one or all of the required parameters are switched on.
+Next I wrote a macro ~package-with-parameters~ that returns a package definition with the default parameter transforms applied. This means that if by default my package uses two parameters ~a~ and ~b~, the macro will return the package with both their parameter transforms applied to it.
+Lastly, I wrote a modified ~modify-inputs~ macro that accepts parameters as conditions for the traditional modify inputs actions.
+* Illustrative example
+The following code builds Guile from the git source.
+Please keep in mind that the syntax is still heavily subject to change, however the underlying mechanisms will remain consistent.
+#+BEGIN_SRC scheme
+  (define-public guile-parameterized
+    (package-with-parameters
+     (inherit guile)
+     (name "guile-parameterized")
+     (properties
+      `(,(parameter-spec-property
+          (local (list
+                  (package-parameter
+                   (name "git")
+                   (transforms
+                    (build-system/transform-match
+                     (_ -> ; matches any build system
+                        (with-git-url . "guile-parameterized=https://git.savannah.gnu.org/git/guile.git"))))))))
+        (defaults '(git))
+        (use-transforms '((git . #t))))))
+#+END_SRC
+The ~package-with-parameters~ macro takes in a package definition and gets the default parameter alist from it, and applies transformations according to it.
+Here we're defining a version of guile that inherits guile code and adds a ~parameter-spec~ property.
+The ~parameter-spec-property~ takes a ~parameter-spec~ definition and returns it in the property format expected by the ~package~ record.
+Inside the ~parameter-spec~ definition, we start by defining ~local~ parameters. These parameters are only available to the package, and override any global parameters with the same name.
+This overriding feature will make parameter specifications resilient to globalization of previously local parameters, and also make it possible to globally declare what local parameters you'd like to access across packages.
+The name field of the parameter record accepts both strings and symbols, but when referring to a parameter in other fields one must use a symbol.
+The transforms field of the parameter record takes a hash-table of build systems mapped to a sequence of transforms.
+I have written a handy macro called ~build-system/transform-match~ that takes in a list of lists of the form ~(build-systems -> transforms ...)~ and returns the expected value to the parameter.
+You can use a ~_~ to match all build systems, provide one build system or provide a list of build systems. Having ~_~ is particularly useful for /local/ definitions as their transforms obviously apply to their package's build system.
+The transforms follow the usual cons cell syntax used when [[https://guix.gnu.org/manual/en/html_node/Defining-Package-Variants.html][defining package variants]].
+Next we have the ~defaults~ field, which takes a list of parameters which are expected to be switched on by default.
+Lastly, we have the ~use-transforms~ field which takes an alist of the form ~(parameter . transform)~ where if the transform is ~#t~, the parameter's default transform is used, and otherwise the transform defined there is used. This can save time when writing local parameters as you can define them just by putting a string or symbol with their name in the ~local~ field's list.
+It is important to note that transforms for a given parameter will only be used if the ~use-transforms~ alist contains it.
+Some fields of the parameter-spec record omitted from this example are:
+- ~optional~, for declaring global parameters that can optionally be used
+- ~one-of~, which is a list of lists of parameters of which only one can be used per list
+- ~required~, which is a list of parameters that are *absolutely* required. It exists mostly for global parameters
+- ~canonical~, which contains /canonical combinations/, a proposed feature for solving the substitute problem
+- ~parameter-alist~, (not meant to be modified by the user) contains the final list of active parameters and their values, on or off.
+These all come together to make it possible to define an arbitrary combination of parameters in arbitrary states and test them against the parameter-spec to see if they work and apply them if they do.
+The ~package-with-parameters~ macro is proof of this working, it calculates transforms pertaining to default values and applies them to the ~package~ record defined inside it based on the contents of the ~parameter-spec~.
+If you are just using parameters for conditionals within the package record and have no use for transforms, you do not need to use ~package-with-parameters~.
+* Parametric Conditionals
+I have written a number of conditional macros that check if a given parameter is set to on in the ~parameter-alist~ and update the ~package~ record appropriately.
+Here are examples of their usage:
+** parameter/if
+~parameter/if~ takes a parameter or a list of parameters and checks if any of them are on.
+If they are, it returns the first expression, but if all of them are off, it returns either nothing or the second expression. It behaves similarly to Guile's ~if~ macro.
+#+BEGIN_SRC scheme
+  (parameter/if parameter do-something)
+  (parameter/if parameter do-something do-something-else)
+  (parameter/if (parameters ...) do-something do-something-else)
+#+END_SRC
+** parameter/if-all
+~parameter/if-all~ is similar to ~parameter/if~, but unlike it it requires all parameters in the list to be switched on.
+#+BEGIN_SRC scheme
+  (parameter/if-all (parameters ...) do-something do-something-else)
+#+END_SRC
+** parameter/match
+~parameter/match~ is somewhat similar to Guile's ~cond~, but also very different.
+It takes in a set of lists of the form ~((parameters ...) clauses ...)~, wherein if any in the list of parameters is set to on, the clauses are executed. This behavior is not short-circuiting, and the other lists are checked once one is evaluated regardless of the result.
+A list may be prefixed with ~all~ if all parameters are required to be on.
+Alternatively, a ~_~ can be used to match any and all parameters.
+#+BEGIN_SRC scheme
+  (parameter/match
+   ((all 'a 'b) do-something do-something-more)
+   (_ this-thing-will-always-happen)
+   ('a singleton-arguments-work-too)
+   (('a 'b 'c) any-can-be-on))
+#+END_SRC
+** parameter/match variants
+- ~parameter/match-case~ is the same as ~parameter/match~, but it short-circuits when a matching list is found
+- ~parameter/match-any~ a variant of ~parameter/match~ where ~all~ cannot be used
+- ~parameter/match-all~ a variant of ~parameter/match~ where ~all~ is the default and only method for evaluating parameters
+- ~parameter/match-case-all~ is a variant of ~parameter/match-case~ requiring all parameters to be switched on.
+** parameter/modify-inputs
+The ~modify-inputs~ macro is used very frequently when defining package variants, but due to it being a macro we cannot use ~parameter/match~ inside it to pick arguments.
+Because of this, I have defined a new macro called ~parameter/modify-inputs~ that takes in a list of parameters and a corresponding list of arguments to ~modify-inputs~ that can be used instead of it.
+~_~ can be used to always execute the clauses, and ~all~ may be used to require all parameters to be on.
+#+BEGIN_SRC scheme
+  (parameter/modify-inputs (package-inputs abc)
+    (('x 'y) (append somelib) (delete nonelib))
+    ((all 'y 'z) (append thispkg))
+    (_ (replace xpkg ypkg)))
+#+END_SRC
+* Global Parameters
+The handling of global parameters is an important topic that needs more discussion.
+Right now, the idea is to require all global parameters to be defined in one file and to access them through a hash-table called ~%global-parameters~.
+To make the process of adding values to this hash-table easier, I've written a macro called ~define-global-parameter~ that takes a parameter definition and makes it global.
+* Results
+It is now possible to define a package with parameters and change the parameter-alist to use the parameters.
+Next, I'll be working on parsing negated and enumerated parameters, along with adding support for modify-inputs and package-rewriting in the parameter record itself.
+
+Stay tuned for updates, and happy hacking!
