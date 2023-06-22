@@ -234,6 +234,13 @@
   (one-of parameter-spec/one-of
           (default '())
           (thunked))
+  ;; add dependencies
+  ;; (dependencies (parameter/dependencies
+  ;;                   (a b -> d e f)
+  ;;  	               (c -> g h)))
+  (dependencies parameter-spec/dependencies
+              (default '())
+              (thunked))
   (canonical parameter-spec/canonical-combinations
              (default parameter-spec/defaults)
              (thunked))
