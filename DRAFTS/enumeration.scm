@@ -31,7 +31,7 @@
 
 (package-parameter
  (name 'oflag)
- (ptype 'oflag-type) ; to avoid confusion with package-parameter-type (type definition)
+ (type 'oflag-type) ; to avoid confusion with package-parameter-type (type definition)
  (morphisms
   (parameter/morphisms
    (transform -> (some-transform . (string-append ^name "=something")) (some-other-transform . ^name)) ; ^name -> filled in as package name
@@ -69,6 +69,34 @@
 
 ;; checking for negation:
 (and (string=? (string-take-right (symbol->string 'p!) 1) "!")
-     (not (package-parameter-type-negation (package-parameter-ptype PARAMETER-NAME))))
+     (not (package-parameter-type-negation (package-parameter-type PARAMETER-NAME))))
 
 ;; if a type is non-boolean, we want the UI to show all enumerations as well
+
+(use-modules (ice-9 regex))
+(match:prefix (if-return
+               (string-match "!" "psi")
+               (string-match "!" "!")))
+
+(define-syntax if-return
+  (syntax-rules ()
+    [(% expr)
+     (if expr expr)]
+    [(% expr els)
+     (if expr expr els)]))
+
+(define (give-me-a-symbol ex)
+  (cond ((symbol? ex) ex)
+        ((string? ex) (string->symbol ex))
+        (else (throw 'bad! ex))))
+
+(define-record-type* <parameter-type> parameter-type
+  make-parameter-type
+  parameter-type?
+  (name          parameter-type-name
+                 (sanitizer give-me-a-symbol))
+  (universe      parameter-type-universe)
+  (negation      parameter-type-negation
+                 (default (car universe)))
+  (description   parameter-type-description))
+

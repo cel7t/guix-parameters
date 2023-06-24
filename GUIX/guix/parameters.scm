@@ -255,23 +255,23 @@
 
 ;; g23: Most parameters should be boolean
 ;; Might make sense to add a recursive type
-(define boolean
-  ;; The Boolean parameter type.
-  (parameter-type (name 'boolean)
-                  (universe '(#t #f))
-                  (value->string
-                   (match-lambda
-                     (#f "off")
-                     (#t "on")))
-                  (string->value
-                   (lambda (str)
-                     (cond ((string-ci=? str "on")
-                            #t)
-                           ((string-ci=? str "off")
-                            #f)
-                           (else
-                            (raise (condition
-                                    (&message (message "wrong value"))))))))))
+;; (define boolean
+;;   ;; The Boolean parameter type.
+;;   (parameter-type (name 'boolean)
+;;                   (universe '(#t #f))
+;;                   (value->string
+;;                    (match-lambda
+;;                      (#f "off")
+;;                      (#t "on")))
+;;                   (string->value
+;;                    (lambda (str)
+;;                      (cond ((string-ci=? str "on")
+;;                             #t)
+;;                            ((string-ci=? str "off")
+;;                             #f)
+;;                            (else
+;;                             (raise (condition
+;;                                     (&message (message "wrong value"))))))))))
 
 (define-syntax parameter-spec-property
   (syntax-rules ()
@@ -722,3 +722,66 @@
       clauses ...)]
     [(% inputs)
      inputs]))
+
+(define (give-me-a-symbol ex)
+  (cond ((symbol? ex) ex)
+        ((string? ex) (string->symbol ex))
+        (else (throw 'bad! ex))))
+
+(define-record-type* <parameter-type> parameter-type
+  make-parameter-type
+  parameter-type?
+  this-parameter-type
+  (name          parameter-type-name
+                 (sanitize give-me-a-symbol))
+  (universe      parameter-type-universe)
+  (negation      parameter-type-negation
+                 (default (car (parameter-type-universe this-parameter-type)))
+                 (thunked))
+  (description   parameter-type-description
+                 (default "")))
+
+;; (parameter-type-negation
+;;  (parameter-type
+;;   (name "ok")
+;;   (universe '(not-ok ok))))
+
+(define-syntax if-return
+  (syntax-rules ()
+    [(% expr)
+     (if expr expr)]
+    [(% expr els)
+     (if expr expr els)]))
+
+(define-syntax parameter/type
+  (syntax-rules (_)
+    [(% _ rest ...)
+     (parameter/type (string-append (if-return (package-parameter-name this-package-parameter)
+                                      "blank")
+                                    "-type")
+                     rest ...)]
+    [(% t-name t-universe)
+     (parameter-type
+      (name t-name)
+      (universe t-universe))]
+    [(% t-name t-universe t-negation)
+     (parameter-type
+      (name t-name)
+      (universe t-universe)
+      (negation t-negation))]
+    [(% t-name t-universe t-negation t-description)
+     (parameter-type
+      (name t-name)
+      (universe t-universe)
+      (negation t-negation)
+      (description t-description))]))
+
+;; (parameter-type-negation (parameter/type _ '(1 2 3)))
+;; 
+;; (define (package-parameter-name _) #f)
+;; (define this-package-parameter #f)
+(define boolean
+  (parameter-type
+   (name 'boolean)
+   (universe '(off on))
+   (description "Boolean Parameter Type")))
