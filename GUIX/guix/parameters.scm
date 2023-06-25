@@ -80,12 +80,14 @@
   (name          package-parameter-name
                  (sanitize sanitize-string-or-symbol))
   (type          package-parameter-type (default boolean))
-  ;; the standard transforms; of the form (list ((build-system ...) transform))
-  ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
-  ;; this is an alist, the parser will handle the special keyword `all` as applicable to all systems.
-  (transforms    package-parameter-transforms
-                 (default (alist->hash-table '()))
-                 (sanitize sanitize-build-system-transforms))
+  ;; ;; the standard transforms; of the form (list ((build-system ...) transform))
+  ;; ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
+  ;; ;; this is an alist, the parser will handle the special keyword `all` as applicable to all systems.
+  ;; (transforms    package-parameter-transforms
+  ;;                (default (alist->hash-table '()))
+  ;;                (sanitize sanitize-build-system-transforms))
+  (morphisms     (default (alist->hash-table '()))
+                 (sanitize sanitize-build-system-morphisms))
 
   ;; SCOPE FOR IMPROVEMENT:
   ;; another field for package-input-rewriting called 'rewrite'
@@ -98,13 +100,13 @@
   (description   package-parameter-description (default "")))
 
 ;; Type of a package parameter.
-(define-record-type* <parameter-type> parameter-type
-  make-parameter-type
-  parameter-type?
-  (name          parameter-type-name)              ;debugging purposes only!
-  (string->value parameter-type-string->value)
-  (value->string parameter-type-value->string)
-  (universe      parameter-type-universe))
+;; (define-record-type* <parameter-type> parameter-type
+;;   make-parameter-type
+;;   parameter-type?
+;;   (name          parameter-type-name)              ;debugging purposes only!
+;;   (string->value parameter-type-string->value)
+;;   (value->string parameter-type-value->string)
+;;   (universe      parameter-type-universe))
 
 ;; SANITIZERS
 
@@ -116,7 +118,8 @@
         ((symbol? x) x)
         (else (throw 'bad! x))))
 
-(define (sanitize-build-system-transforms ls)
+;; (define (sanitize-build-system-transforms ls)
+(define (sanitize-build-system-morphisms ls)
   ;; ((a . t1 t2 ...) ((b c) t3 t4 ...))
   (cond ((hash-table? ls) ls)
         ((list? ls)
@@ -143,6 +146,50 @@
     ((build-system/transform x -> y ...)
      (cons x (lots-of-cons->alist y ...)))))
 
+;; Parameter Morphisms:
+;; (parameter/morphism
+;;  (sym + build-system -> morphisms ...))
+
+;; alist->hash-table of the format
+;; ((build-system . ((sym . ((transforms (a . b) ...) ...)) ...)) ...)
+
+(define (return-list lst)
+  (or (and (list? lst) lst)
+      (list lst)))
+
+(define-syntax parameter/morphism
+  (syntax-rules (-> + _)
+    [(%) '()]
+    [(% _ -> morphisms ...)
+     (cons 'any (cons 'any (parameter/parse-morphisms morphisms ...)))]
+    [(% _ + _ -> morphisms ...)
+     (cons 'any (cons 'any (parameter/parse-morphisms morphisms ...)))]
+    [(% sym + _ -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+       (cons 'any (map (lambda (g)
+                         (cons g parsed-morphisms))
+                       (return-list sym))))]
+    [(% _ + b-system -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+       (map (lambda (g) (cons g (cons 'any parsed-morphisms)))
+            (return-list b-system)))]
+    [(% sym + b-system -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+       (map (lambda (g) (cons g (map (lambda (h) (cons h parsed-morphisms))
+                                (return-list sym))))
+            (return-list b-system)))]
+    [(% sym -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+       (cons 'any (map (lambda (g)
+                         (cons g parsed-morphisms))
+                       (return-list sym))))]))
+    
+;; (parameter/morphism '(1 2 3) + '(a b c) -> '(some morphisms))
+
+;; look into more efficient ways to store this data
+
+;; (define (parameter/parse-morphisms lst) lst) ; '(#:transform (a . b) ... #:rewrite (b . c) ... #:modify (c . d) ...)
+           
 (define-syntax build-system/transform-match
   (syntax-rules ()
     ((_ (x ...))
@@ -746,17 +793,10 @@
 ;;   (name "ok")
 ;;   (universe '(not-ok ok))))
 
-(define-syntax if-return
-  (syntax-rules ()
-    [(% expr)
-     (if expr expr)]
-    [(% expr els)
-     (if expr expr els)]))
-
 (define-syntax parameter/type
   (syntax-rules (_)
     [(% _ rest ...)
-     (parameter/type (string-append (if-return (package-parameter-name this-package-parameter)
+     (parameter/type (string-append (or (package-parameter-name this-package-parameter)
                                       "blank")
                                     "-type")
                      rest ...)]

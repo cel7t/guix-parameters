@@ -100,3 +100,10 @@
                  (default (car universe)))
   (description   parameter-type-description))
 
+;; (define-syntax p-test
+;;   (syntax-rules (+)
+;;     [(% a ... + c ...)
+;;      (+ a ... (p-test c ...))]))
+    
+;; multiple ... only work with ()
+;; this is because ... is a postfix operator
