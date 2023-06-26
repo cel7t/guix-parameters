@@ -148,7 +148,7 @@
 
 ;; Parameter Morphisms:
 ;; (parameter/morphism
-;;  (sym + build-system -> morphisms ...))
+;;  (sym + build-system -> morphism-list))
 
 ;; alist->hash-table of the format
 ;; ((build-system . ((sym . ((transforms (a . b) ...) ...)) ...)) ...)
@@ -160,45 +160,89 @@
 (define-syntax parameter/morphism
   (syntax-rules (-> + _)
     [(%) '()]
-    [(% _ -> morphisms ...)
-     (cons 'any (cons 'any (parameter/parse-morphisms morphisms ...)))]
-    [(% _ + _ -> morphisms ...)
-     (cons 'any (cons 'any (parameter/parse-morphisms morphisms ...)))]
-    [(% sym + _ -> morphisms ...)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+    [(% _ -> morphism-list)
+     (cons 'any (cons 'any (parameter/parse-morphisms morphism-list)))]
+    [(% _ + _ -> morphism-list)
+     (cons 'any (cons 'any (parameter/parse-morphisms morphism-list)))]
+    [(% sym + _ -> morphism-list)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
        (cons 'any (map (lambda (g)
                          (cons g parsed-morphisms))
                        (return-list sym))))]
-    [(% _ + b-system -> morphisms ...)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+    [(% _ + b-system -> morphism-list)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
        (map (lambda (g) (cons g (cons 'any parsed-morphisms)))
             (return-list b-system)))]
-    [(% sym + b-system -> morphisms ...)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+    [(% sym + b-system -> morphism-list)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
        (map (lambda (g) (cons g (map (lambda (h) (cons h parsed-morphisms))
                                 (return-list sym))))
             (return-list b-system)))]
-    [(% sym -> morphisms ...)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphisms ...)))
+    [(% sym -> morphism-list)
+     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
        (cons 'any (map (lambda (g)
                          (cons g parsed-morphisms))
                        (return-list sym))))]))
     
-;; (parameter/morphism '(1 2 3) + '(a b c) -> '(some morphisms))
+;; (parameter/morphism '(1 2 3) + '(a b c) -> '(#:transform m1 #:rewrite m2 m3 #:modify c3))
 
 ;; look into more efficient ways to store this data
 
-;; (define (parameter/parse-morphisms lst) lst) ; '(#:transform (a . b) ... #:rewrite (b . c) ... #:modify (c . d) ...)
-           
-(define-syntax build-system/transform-match
-  (syntax-rules ()
-    ((_ (x ...))
+(define* (parameter/parse-morphisms kw-lst)
+  (define* (list-till-kw lst #:optional (carry '()))
+    (cond ((null? lst) (cons (reverse carry) '()))
+          ((and (not (null? (cdr lst)))
+                (keyword? (car lst)))
+           (cons (reverse carry) lst))
+          (else (list-till-kw (cdr lst) (cons (car lst) carry)))))
+  (define* (break-keywords lst)
+    (cond ((null? lst) '())
+          ((null? (cdr lst)) '())
+          ((keyword? (car lst))
+           (let ((next-lst (list-till-kw (cdr lst))))
+             (cons (cons (keyword->symbol (car lst))
+                         (car next-lst))
+                   (break-keywords (cdr next-lst)))))
+          (else (throw 'bad! lst))))
+  (break-keywords kw-lst))
+
+;; (define-syntax build-system/transform-match
+;;   (syntax-rules ()
+;;     ((_ (x ...))
+;;      (list
+;;       (build-system/transform x ...)))
+;;     ((_ (x ...) rest ...)
+;;      (cons
+;;       (build-system/transform x ...)
+;;       (build-system/transform-match rest ...)))))
+
+
+(define* (merge-same-car lst #:optional (carry '()))
+  (cond ((null? lst) carry)
+        ((null? (filter (lambda (y) (eqv? (caar lst)
+                                     (car y)))
+                        carry))
+         (merge-same-car (cdr lst) (cons (car lst) carry)))
+        (else
+         (merge-same-car (cdr lst)
+                         (assq-set! carry (caar lst) (cdar lst))))))
+        
+(define-syntax parameter/morphism-match
+  (syntax-rules (lock)
+    ((_ lock (x ...))
      (list
-      (build-system/transform x ...)))
-    ((_ (x ...) rest ...)
+      (parameter/morphism x ...)))
+    ((_ lock (x ...) rest ...)
      (cons
-      (build-system/transform x ...)
-      (build-system/transform-match rest ...)))))
+      (parameter/morphism x ...)
+      (parameter/morphism-match lock rest ...)))
+    ((_ rest ...)
+     (merge-similar-car
+      (parameter/morphism-match rest ...)))))
+
+(parameter/morphism-match
+ ('(a b c) + '(d e f) -> '(#:transform 'x 'y #:rewrite 'z))
+ ('(a b c) + _ -> '(#:transform 'u)))
 
 (define (local-sanitizer ls)
   (if (list? ls)

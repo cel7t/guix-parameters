@@ -107,3 +107,46 @@
     
 ;; multiple ... only work with ()
 ;; this is because ... is a postfix operator
+
+(define* (parameter/parse-morphisms lst #:optional (soup '()))
+  (cond ((eqv? (car lst) (symbol->keyword 'transform)) "ok")))
+
+(keyword-like-symbol->keyword ':transform)
+(parameter/parse-morphisms '(:transform))
+
+(use-modules (srfi srfi-1))
+
+(find-tail keyword? '(#:a b c #:d e f))
+
+(span keyword? '(#:a b c #:d e f))
+(break keyword? '(b c d e f))
+
+(car '(1))
+
+(cdr '(1))
+
+(define* (parameter/parse-morphisms kw-lst)
+  (define* (list-till-kw lst #:optional (carry '()))
+    (cond ((null? lst) (cons (reverse carry) '()))
+          ((and (not (null? (cdr lst)))
+                (keyword? (car lst)))
+           (cons (reverse carry) lst))
+          (else (list-till-kw (cdr lst) (cons (car lst) carry)))))
+  (define* (break-keywords lst)
+    (cond ((null? lst) '())
+          ((null? (cdr lst)) '())
+          ((keyword? (car lst))
+           (let ((next-lst (list-till-kw (cdr lst))))
+             (cons (cons (keyword->symbol (car lst))
+                         (car next-lst))
+                   (break-keywords (cdr next-lst)))))
+          (else (throw 'bad! lst))))
+  (break-keywords kw-lst))
+
+(break-keywords '(#:a b c #:d e f))
+(break keyword? '(b c #:d e f))
+(list-till-kw '(b c #:d e f))
+(parameter/parse-morphisms '(#:a b c #:d e f))
+
+(values 1 2)
+      
