@@ -150,3 +150,13 @@
 
 (values 1 2)
       
+(define-syntax syntax-case-test
+  (lambda (x)
+    (syntax-case x ()
+      ((_ p rest ...)
+       (syntax
+        (when (keyword? p)
+           rest ...))))))
+
+(syntax-case-test "not ok" "ok")
+(syntax-case-test #:ok "ok")

@@ -157,36 +157,60 @@
   (or (and (list? lst) lst)
       (list lst)))
 
+(define* (merge-same-car lst #:optional (carry '()))
+  (define (assq-append alist key cont)
+    (if (eqv? (caar alist) key)
+        (cons (cons key (append (cdar alist) cont))
+              (cdr alist))
+        (cons (car alist) (assq-append (cdr alist) key cont))))
+  (cond ((null? lst) carry)
+        ((null? (filter (lambda (y) (eqv? (caar lst)
+                                     (car y)))
+                        carry))
+         (merge-same-car (cdr lst) (cons (car lst) carry)))
+        (else
+         (merge-same-car (cdr lst)
+                         (assq-append carry (caar lst) (cdar lst))))))
+
 (define-syntax parameter/morphism
   (syntax-rules (-> + _)
     [(%) '()]
     [(% _ -> morphism-list)
-     (cons 'any (cons 'any (parameter/parse-morphisms morphism-list)))]
+     (cons 'any (cons 'any (parameter/parse-morphisms 'morphism-list)))]
     [(% _ + _ -> morphism-list)
-     (cons 'any (cons 'any (parameter/parse-morphisms morphism-list)))]
+     (cons 'any (cons 'any (parameter/parse-morphisms 'morphism-list)))]
     [(% sym + _ -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
+     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
        (cons 'any (map (lambda (g)
                          (cons g parsed-morphisms))
-                       (return-list sym))))]
+                       (return-list 'sym))))]
     [(% _ + b-system -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
+     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
        (map (lambda (g) (cons g (cons 'any parsed-morphisms)))
-            (return-list b-system)))]
+            (return-list 'b-system)))]
     [(% sym + b-system -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
+     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
        (map (lambda (g) (cons g (map (lambda (h) (cons h parsed-morphisms))
-                                (return-list sym))))
-            (return-list b-system)))]
+                                (return-list 'sym))))
+            (return-list 'b-system)))]
     [(% sym -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms morphism-list)))
+     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
        (cons 'any (map (lambda (g)
                          (cons g parsed-morphisms))
-                       (return-list sym))))]))
+                       (return-list 'sym))))]))
     
-;; (parameter/morphism '(1 2 3) + '(a b c) -> '(#:transform m1 #:rewrite m2 m3 #:modify c3))
+;; (parameter/morphism (1 2 3) + (a b c) -> (#:transform m1 #:rewrite m2 m3 #:modify c3))
 
 ;; look into more efficient ways to store this data
+
+;; if we want to use break, (use-modules (srfi srfi-1) (ice-9 receive))
+;;
+;; (define (list-till-kw lst)
+;;   (receive (a b)
+;;       (break keyword? lst)
+;;     (cons a b)))
+;;
+;; (list-till-kw '(a b #:c d e))
 
 (define* (parameter/parse-morphisms kw-lst)
   (define* (list-till-kw lst #:optional (carry '()))
@@ -204,7 +228,7 @@
                          (car next-lst))
                    (break-keywords (cdr next-lst)))))
           (else (throw 'bad! lst))))
-  (break-keywords kw-lst))
+  (merge-same-car (break-keywords kw-lst)))
 
 ;; (define-syntax build-system/transform-match
 ;;   (syntax-rules ()
@@ -216,33 +240,30 @@
 ;;       (build-system/transform x ...)
 ;;       (build-system/transform-match rest ...)))))
 
+       
+;; (parameter/parse-morphisms '(#:transform a (b c) #:rewrite d #:transform h))
 
-(define* (merge-same-car lst #:optional (carry '()))
-  (cond ((null? lst) carry)
-        ((null? (filter (lambda (y) (eqv? (caar lst)
-                                     (car y)))
-                        carry))
-         (merge-same-car (cdr lst) (cons (car lst) carry)))
-        (else
-         (merge-same-car (cdr lst)
-                         (assq-set! carry (caar lst) (cdar lst))))))
-        
+;; The lock here is used to signal when merge-same-car is to be used
+;; having a :lock means merge-same-car has been used further up the tree
+;; note that :lock is not a keyword but a symbol
 (define-syntax parameter/morphism-match
-  (syntax-rules (lock)
-    ((_ lock (x ...))
+  (syntax-rules (:lock _ -> +)
+    ((% :lock (x ...))
      (list
       (parameter/morphism x ...)))
-    ((_ lock (x ...) rest ...)
+    ((% :lock (x ...) rest ...)
      (cons
       (parameter/morphism x ...)
-      (parameter/morphism-match lock rest ...)))
-    ((_ rest ...)
-     (merge-similar-car
-      (parameter/morphism-match rest ...)))))
+      (parameter/morphism-match :lock rest ...)))
+    ((% rest ...)
+     (merge-same-car
+      (parameter/morphism-match :lock rest ...)))))
 
-(parameter/morphism-match
- ('(a b c) + '(d e f) -> '(#:transform 'x 'y #:rewrite 'z))
- ('(a b c) + _ -> '(#:transform 'u)))
+;; (use-modules (ice-9 pretty-print))
+;; (pretty-print
+;; (parameter/morphism-match
+;;  ((a b c) + (d e f) -> (#:transform (x _) y #:rewrite z))
+;;  ((a b c) + _ -> (#:transform u))))
 
 (define (local-sanitizer ls)
   (if (list? ls)
@@ -284,6 +305,52 @@
                    x))
              ls)
         (throw 'bad! ls))))
+
+;; two types of dependencies:
+;; pkg variant dependencies
+;; parameter dependencies
+;;
+;; (parameter/dependency-match
+;;  ((parameter sym) -> #:parameters (parameter-b sym) ... #:packages (package morphisms) ...)
+;;  ;; this also works:
+;;  (parameter -> #:parameters parameter-b ... #:packages package-variant ...)
+;;  ;; here parameter is not negated and package-variant is defined 
+;;  ((parameter parameter-c (parameter-d val) ...) -> parameter-b ...))
+;;  ((parameter parameter-c (parameter-d val) ...) -> parameter-b ...))
+
+(define-syntax parameter/dependency
+  (lambda (defn)
+    (syntax-case defn (->)
+      [(% p-lst -> rest ...)
+       (syntax
+        (let ((morphism-list (return-list '(rest ...))))
+          (map
+           (lambda (x)
+             (cons x
+                   (parameter/parse-morphisms (if (keyword? (car morphism-list))
+                                                  morphism-list
+                                                  (cons #:parameters morphism-list)))))
+           (return-list 'p-lst))))])))
+
+;; (parameter/dependency (a b) -> #:parameters a b #:packages d)
+;; (parameter/dependency (a (b yyy)) -> m n o)
+
+(define-syntax parameter/dependency-match
+  (syntax-rules (:lock _ ->)
+    ((% :lock (x ...))
+      (parameter/dependency x ...))
+    ((% :lock (x ...) rest ...)
+     (append
+      (parameter/dependency x ...)
+      (parameter/dependency-match :lock rest ...)))
+    ((% rest ...)
+     (merge-same-car
+      (parameter/dependency-match :lock rest ...)))))
+
+(parameter/dependency-match
+ (a -> k)
+ ((a b) -> #:parameters a b #:packages d)
+ ((a (b yyy)) -> m n o))
 
 ;; thunked -> we can do stuff like (parameter-spec-optional-parameters ps) to get the optional parameters
 (define-record-type* <parameter-spec> parameter-spec
