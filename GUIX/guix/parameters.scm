@@ -275,10 +275,18 @@
            ls)
       (throw 'bad! ls)))
 
+;; (use-modules (ice-9 match))
 (define (morphism-sanitizer lv) ; ((a^ m) ((b sym) m2) c ((d sym1 sym2 ...) m3) ...)
   (define (default-morphism? psym) ; check if parameter is given as parameter^
-   (or (string=? (string-take-right (symbol->string psym) 1) "^")
-       (string=? (string-take-right (symbol->string psym) 2) "^!")))
+    ;; TAKE SPECIAL CARE:
+    ;;   As we are treating ^ as a special character,
+    ;;   it will trim it away from the parameter symbol.
+    ;;   DO NOT USE IT AT THE END OF THE PARAMETER!
+    (or (and (string=? (string-take-right (symbol->string psym) 1) "^")
+             (string->symbol (string-drop-right (symbol->string psym) 1)))
+        (and (string=? (string-take-right (symbol->string psym) 2) "^!")
+             (string->symbol (string-append (string-drop-right (symbol->string psym) 2)
+                                            "!")))))
   (define (default-morphism-list psym)
     (or (find (lambda (g) (eqv? psym
                            (package-parameter-name g)))
@@ -299,12 +307,13 @@
                              (parameter/parse-morphisms m)
                              m)))
           (map (lambda (x) (cons x morphisms))
-               (list vals)))]
+               (return-list vals)))]
        [((? default-morphism? psym) sym)
         ;; get default morphism at sym
-        (list
-        (cons (cons psym sym)
-              (default-morphism-list psym)))]
+        (let ((csym (default-morphism? psym)))
+          (list
+           (cons (cons csym sym)
+                 (default-morphism-list csym))))]
        [(psym m)
         ;; morphism for psym
         (let ((morphisms (if (keyword? (car m))

@@ -174,3 +174,88 @@
 (use-modules (srfi srfi-1))
 
 (pair? (cons 1 2))
+
+;; Current Resolver:
+;;   Receives Boolean inputs, checks for #t
+;; New Resolver:
+;;   Must account for non-booleans and !
+
+(define (parameter-spec/all-parameters pspec) ; for the UI
+  ;; '(sym-a sym-b ...)
+  (delete-duplicates
+   (append ; works same as before
+    (map (lambda (x) (package-parameter-name x))
+         (parameter-spec/local pspec))
+    (parameter-spec/defaults pspec)
+    (parameter-spec/required pspec)
+    ;; We are NOT pulling dependencies at this phase
+    ;; They will not be influenced by the user parameter alist
+    (apply append (parameter-spec/one-of pspec))
+    (parameter-spec/optional pspec))))
+
+(define (parameter-spec/base-parameter-alist pspec)) ; returns base case
+  ;; '((a . psym) (b . #f) ...)
+  ;; TO ADD HERE:
+  ;; 1. checking for parameteric dependencies base on the list
+  ;; 2. negation based resolution
+
+(define (parameter-spec/override-alist pspec plist))
+  ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)
+  ;; B: OFF[(DIFF PSPEC/ALL A)]
+  ;; A + B
+  ;; needs to be rewritten to handle non-boolean overrides
+
+(define (parameter-spec/validate-parameter-alist pspec plist) ; #t or #f
+  (define (validate/logic)) ; defined as functions - want to call them individually
+  ;; must validate non-booleans as well
+  ;; must validate ! as well
+  (define (validate/duplicates)
+    ;; add functionality to cancel out x and x!
+    (define (validate/not-there? x lst)
+      (if (not (member x lst))
+          (if (> (length lst) 1)
+              (validate/not-there? (car lst) (cdr lst))
+              #t)
+          #f))
+    (let ((alist-p (map car plist)))
+      (validate/not-there? (car alist-p) (cdr alist-p))))
+  (define (validate/coverage)
+    ;; add support for values
+    (let ((all-p (parameter-spec/all-parameters pspec))
+          (alist-p (map car plist)))
+      (fold (lambda (x y) (and x y)) #t
+            (map (lambda (x) (not (not (member x alist-p))))
+                 all-p))))
+  (cond ((not (validate/logic))
+         ;;; XXX: use raise/formatted-message instead of display
+         (begin (display "There is a logic error in the given list")
+                #f))
+        ((not (validate/coverage))
+         (begin (display "There is a coverage error: check the pipeline")
+                #f))
+        ((not (validate/duplicates))
+         (begin (display "There are duplicates in the given list")
+                #f))
+        (else #t)))
+
+;; finally, need to rewrite this with support for the above
+(define (parameter-spec/resolve-parameter-alist pspec plist) ; checks if plist works
+  ;; response: (#t . overriden-plist) if it works, (#f . (parameter-spec/parameter-alist pspec)) otherwise
+  ;; parameter-alist -> base-parameter-alist by default, but can be overriden
+  ;; this command can thus be chained
+
+  ;; DEFAULT: pspec_ default -> valid?: (validate default) -> default: valid? default | '()
+  ;; TRANSFORM -> PLIST
+  ;; -> R-PLIST: (intersect plist all) - (common plist defaults) + (uncommon plist defaults)
+  ;; -> valid?: (validate R-PLIST) -> pspec/parameter-alist: valid? R-PLIST pspec/parameter-alist
+  (let ((olist (parameter-spec/override-alist pspec plist)))
+    (if (parameter-spec/validate-parameter-alist pspec olist)
+        (cons #t olist)
+        (cons #f (parameter-spec/parameter-alist pspec)))))
+
+;; SUMMARY OF CHANGES:
+;;  internally, p! will always be treated as (p 0)
+;;  p will be treated as (p 1)
+;;  (p sym) will be treated as (p i)
+;; Hence the entire existing parser procedure system needs overhaul
+;; Will be done with pattern-matching instead of maps
