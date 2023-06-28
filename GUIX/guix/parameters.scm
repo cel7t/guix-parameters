@@ -175,31 +175,31 @@
 (define-syntax parameter/morphism
   (syntax-rules (-> + _)
     [(%) '()]
-    [(% _ -> morphism-list)
-     (cons 'any (cons 'any (parameter/parse-morphisms 'morphism-list)))]
-    [(% _ + _ -> morphism-list)
-     (cons 'any (cons 'any (parameter/parse-morphisms 'morphism-list)))]
-    [(% sym + _ -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
+    [(% _ -> morphisms ...)
+     (cons 'any (cons 'any (parameter/parse-morphisms '(morphisms ...))))]
+    [(% _ + _ -> morphisms ...)
+     (cons 'any (cons 'any (parameter/parse-morphisms '(morphisms ...))))]
+    [(% sym + _ -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms '(morphisms ...))))
        (cons 'any (map (lambda (g)
                          (cons g parsed-morphisms))
                        (return-list 'sym))))]
-    [(% _ + b-system -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
+    [(% _ + b-system -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms '(morphisms ...))))
        (map (lambda (g) (cons g (cons 'any parsed-morphisms)))
             (return-list 'b-system)))]
-    [(% sym + b-system -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
+    [(% sym + b-system -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms '(morphisms ...))))
        (map (lambda (g) (cons g (map (lambda (h) (cons h parsed-morphisms))
                                 (return-list 'sym))))
             (return-list 'b-system)))]
-    [(% sym -> morphism-list)
-     (let ((parsed-morphisms (parameter/parse-morphisms 'morphism-list)))
+    [(% sym -> morphisms ...)
+     (let ((parsed-morphisms (parameter/parse-morphisms '(morphisms ...))))
        (cons 'any (map (lambda (g)
                          (cons g parsed-morphisms))
                        (return-list 'sym))))]))
     
-;; (parameter/morphism (1 2 3) + (a b c) -> (#:transform m1 #:rewrite m2 m3 #:modify c3))
+;; (parameter/morphism (1 2 3) + (a b c) -> #:transform m1 #:rewrite m2 m3 #:modify c3)
 
 ;; look into more efficient ways to store this data
 
@@ -262,8 +262,8 @@
 ;; (use-modules (ice-9 pretty-print))
 ;; (pretty-print
 ;; (parameter/morphism-match
-;;  ((a b c) + (d e f) -> (#:transform (x _) y #:rewrite z))
-;;  ((a b c) + _ -> (#:transform u))))
+;;  ((a b c) + (d e f) -> #:transform (x _) y #:rewrite z)
+;;  ((a b c) + _ -> #:transform u)))
 
 (define (local-sanitizer ls)
   (if (list? ls)
@@ -275,36 +275,77 @@
            ls)
       (throw 'bad! ls)))
 
-(define (transform-sanitizer lv)
+(define (morphism-sanitizer lv) ; ((a^ m) ((b sym) m2) c ((d sym1 sym2 ...) m3) ...)
+  (define (default-morphism? psym) ; check if parameter is given as parameter^
+   (or (string=? (string-take-right (symbol->string psym) 1) "^")
+       (string=? (string-take-right (symbol->string psym) 2) "^!")))
+  (define (default-morphism-list psym)
+    (or (find (lambda (g) (eqv? psym
+                           (package-parameter-name g)))
+              lv)
+             (hash-ref %global-parameters psym)
+             (throw 'bad! psym)))
   (lambda (ls)
-    (if (list? ls)
-        (map (lambda (x)
-               (if (eqv? #t (cdr x))
-                   (cond
-                    ((package-parameter? (car x))
-                     (cons (package-parameter-name (car x))
-                           (package-parameter-transforms (car x))))
-                    ((symbol? (car x))
-                     (cons (car x)
-                           (package-parameter-transforms
-                            (or
-                             (find (lambda (g) (eqv? (car x)
-                                                     (package-parameter-name g)))
-                                   lv)
-                             (hash-ref %global-parameters (car x))
-                             (throw 'bad! (car x))))))
-                    ((string? (car x))
-                     (let ((y (string->symbol (car x))))
-                       (cons y
-                             (or
-                              (find (lambda (g) (eqv? y
-                                                      (package-parameter-name g)))
-                                    lv)
-                              (hash-ref %global-parameters y)
-                              (throw 'bad! y))))))
-                   x))
-             ls)
-        (throw 'bad! ls))))
+    (map
+     (match-lambda
+       [psym
+        ;; default morphism for psym
+        (list
+         (cons psym
+               (default-morphism-list psym)))]
+       [((psym vals ...) m)
+        ;; assign morphism to psym at vals
+        (let ((morphisms (if (keyword? (car m))
+                             (parameter/parse-morphisms m)
+                             m)))
+          (map (lambda (x) (cons x morphisms))
+               (list vals)))]
+       [((? default-morphism? psym) sym)
+        ;; get default morphism at sym
+        (list
+        (cons (cons psym sym)
+              (default-morphism-list psym)))]
+       [(psym m)
+        ;; morphism for psym
+        (let ((morphisms (if (keyword? (car m))
+                             (parameter/parse-morphisms m)
+                             m)))
+        (list
+         (cons psym morphisms)))]
+       [x
+        (throw 'bad! x)])
+     ls)))
+            
+;; (define (transform-sanitizer lv)
+;;  (lambda (ls)
+;;    (if (list? ls)
+;;        (map (lambda (x)
+;;               (if (eqv? #t (cdr x))
+;;                   (cond
+;;                    ((package-parameter? (car x))
+;;                     (cons (package-parameter-name (car x))
+;;                           (package-parameter-morphisms (car x))))
+;;                    ((symbol? (car x))
+;;                     (cons (car x)
+;;                           (package-parameter-morphisms
+;;                            (or
+;;                             (find (lambda (g) (eqv? (car x)
+;;                                                     (package-parameter-name g)))
+;;                                   lv)
+;;                             (hash-ref %global-parameters (car x))
+;;                             (throw 'bad! (car x))))))
+;;                    ((string? (car x))
+;;                     (let ((y (string->symbol (car x))))
+;;                       (cons y
+;;                             (or
+;;                              (find (lambda (g) (eqv? y
+;;                                                      (package-parameter-name g)))
+;;                                    lv)
+;;                              (hash-ref %global-parameters y)
+;;                              (throw 'bad! y))))))
+;;                   x))
+;;             ls)
+;;        (throw 'bad! ls))))
 
 ;; two types of dependencies:
 ;; pkg variant dependencies
@@ -347,10 +388,10 @@
      (merge-same-car
       (parameter/dependency-match :lock rest ...)))))
 
-(parameter/dependency-match
- (a -> k)
- ((a b) -> #:parameters a b #:packages d)
- ((a (b yyy)) -> m n o))
+;; (parameter/dependency-match
+;;  (a -> k)
+;;  ((a b) -> #:parameters a b #:packages d)
+;;  ((a (b yyy)) -> m n o))
 
 ;; thunked -> we can do stuff like (parameter-spec-optional-parameters ps) to get the optional parameters
 (define-record-type* <parameter-spec> parameter-spec
@@ -361,7 +402,7 @@
   (local    parameter-spec/local
     ;; keeping it as an alist as it will be useful to retrieve them for the UI
     (default '())
-    (sanitize local-sanitizer)
+    (sanitize local-sanitizer) ; morphism-update: all good!
     (thunked))
   ;; 6/15: Pjotr recommended using a global hash table instead.
   ;;       See: (define-global-parameter), %global-parameters
@@ -376,7 +417,7 @@
   ;;                                 (throw 'bad! val)))
   ;;                           ls)))
   ;;         (thunked))
-  (defaults parameter-spec/defaults
+  (defaults parameter-spec/defaults ; '(a b c d ...) -> '(a (b sym) (c sym2) e! ...)
     (default '())
     (thunked))
   (required parameter-spec/required
@@ -402,9 +443,13 @@
   (canonical parameter-spec/canonical-combinations
              (default parameter-spec/defaults)
              (thunked))
-  (use-transforms parameter-spec/use-transforms ;; only use transforms for these
+  ;; (use-transforms parameter-spec/use-transforms ;; only use transforms for these
+  ;;                 (default '())
+  ;;                 (sanitize (transform-sanitizer (parameter-spec/local this-parameter-spec)))
+  ;;                 (thunked))
+  (use-transforms parameter-spec/use-morphisms ;; only use morphisms for these
                   (default '())
-                  (sanitize (transform-sanitizer (parameter-spec/local this-parameter-spec)))
+                  (sanitize (morphism-sanitizer (parameter-spec/local this-parameter-spec)))
                   (thunked))
   (parameter-alist parameter-spec/parameter-alist ;; this is ultimately what will be transformed by --with-parameters
                    ;; '((a . #t) (b . #f) ...)
@@ -431,6 +476,12 @@
 ;;                             (raise (condition
 ;;                                     (&message (message "wrong value"))))))))))
 
+(define boolean
+  (parameter-type
+   (name 'boolean)
+   (universe '(off on))
+   (description "Boolean Parameter Type")))
+
 (define-syntax parameter-spec-property
   (syntax-rules ()
     [(parameter-spec-property body ...)
@@ -441,7 +492,6 @@
   (or (hash-ref parameter-transforms the-build-system)
       (hash-ref parameter-transforms 'any)
       (throw 'bad! the-build-system)))
-
 
 (define-syntax package-with-parameters
   (syntax-rules ()
@@ -931,8 +981,3 @@
 ;; 
 ;; (define (package-parameter-name _) #f)
 ;; (define this-package-parameter #f)
-(define boolean
-  (parameter-type
-   (name 'boolean)
-   (universe '(off on))
-   (description "Boolean Parameter Type")))

@@ -160,3 +160,17 @@
 
 (syntax-case-test "not ok" "ok")
 (syntax-case-test #:ok "ok")
+
+(use-modules (ice-9 match))
+
+(match '(3 3)
+  [((? even? a) b)
+   (display (cons a b))]
+  [(a ...)
+   (display a)]
+  [_
+   (display "fail")])
+
+(use-modules (srfi srfi-1))
+
+(pair? (cons 1 2))
