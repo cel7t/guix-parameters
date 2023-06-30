@@ -69,7 +69,7 @@
 
 ;; checking for negation:
 (and (string=? (string-take-right (symbol->string 'p!) 1) "!")
-     (not (package-parameter-type-negation (package-parameter-type PARAMETER-NAME))))
+     (package-parameter-type-negation (package-parameter-type PARAMETER-NAME)))
 
 ;; if a type is non-boolean, we want the UI to show all enumerations as well
 
@@ -163,10 +163,10 @@
 
 (use-modules (ice-9 match))
 
-(match '(3 3)
-  [((? even? a) b)
+(match '((3 3) 2)
+  [(((? even? a) ...) b)
    (display (cons a b))]
-  [(a ...)
+  [((a ...) b)
    (display a)]
   [_
    (display "fail")])
@@ -182,22 +182,99 @@
 
 (define (parameter-spec/all-parameters pspec) ; for the UI
   ;; '(sym-a sym-b ...)
-  (delete-duplicates
-   (append ; works same as before
-    (map (lambda (x) (package-parameter-name x))
-         (parameter-spec/local pspec))
-    (parameter-spec/defaults pspec)
-    (parameter-spec/required pspec)
-    ;; We are NOT pulling dependencies at this phase
-    ;; They will not be influenced by the user parameter alist
-    (apply append (parameter-spec/one-of pspec))
-    (parameter-spec/optional pspec))))
+  (define (get-parameter-sym psym)
+    (define (unnegate x)
+      (let ((y (symbol->string x)))
+        (if (string= (string-take-right y 1) "!")
+            (string->symbol (string-drop-right y 1))
+            (string->symbol y))))
+    (match psym
+       [(a b ...) (unnegate a)]
+       [(a . b) (unnegate a)]
+       [a (unnegate a)]))
+  ;; TEST: (get-parameter-sym '(x! . y))
+  (map get-parameter-sym ; we do not care about the values
+       (delete-duplicates
+        (append ; works same as before
+         (map (lambda (x) (package-parameter-name x))
+              (parameter-spec/local pspec))
+         (parameter-spec/defaults pspec)
+         (parameter-spec/required pspec)
+         ;; We are NOT pulling dependencies at this phase
+         ;; They will not be influenced by the user parameter alist
+         (apply append (parameter-spec/one-of pspec))
+         (parameter-spec/optional pspec)))))
 
-(define (parameter-spec/base-parameter-alist pspec)) ; returns base case
+;; (define (parameter/get-parameter x) x)
+;; (define (package-parameter-type x) x)
+;; (define (parameter-type-negation x) 0)
+;; (define (parameter-type-universe x) '(0 1 2))
+
+(define (parameter/get-value psym)
+  (define (negated-sym? x)
+    (and (string=? (string-take-right (symbol->string x) 1) "!")
+         (or (parameter-type-negation (package-parameter-type (parameter/get-parameter x)))
+             (throw "Negation not supported for parameter " x))))
+  (define (parameter-default-value x)
+    'match-any)
+    ;; (cadr (parameter-type-universe (package-parameter-type (parameter/get-parameter x)))))
+  (define (parameter-negated-value x)
+    (parameter-type-negation (package-parameter-type (parameter/get-parameter x))))
+  (define (parameter-opposite p x)
+    (let ((neg (parameter-negated-value p)))
+      (if (eqv? x neg)
+          (parameter-default-value p)
+          neg)))
+  (define (unnegate x)
+    (let ((y (symbol->string x)))
+      (if (string= (string-take-right y 1) "!")
+          (string->symbol (string-drop-right y 1))
+          (string->symbol y))))
+  (match psym
+    [(a '!) (parameter/get-value (cons a (parameter-negated-value a)))]
+    [(a . '!) (parameter/get-value (cons a (parameter-negated-value a)))]
+    ;; not really sure how to treat these
+    ;; perhaps should leave them as special characters
+    [(a '_) (parameter/get-value (cons a (parameter-default-value a)))]
+    [(a . '_) (parameter/get-value (cons a (parameter-default-value a)))]
+    [((? negated-sym? a) b) (cons (unnegate a) (parameter-opposite (unnegate a) b))]
+    [(a b) (cons a b)]
+    [((? negated-sym? a) . b) (cons (unnegate a) (parameter-opposite (unnegate a) b))]
+    [(a . b) (cons a b)]
+    [(? negated-sym? a) (cons (unnegate a) (parameter-negated-value (unnegate a)))]
+    [a (cons a (parameter-default-value a))]
+    [_ (throw "Bad parameter definition: " psym)]))
+
+;; (parameter/get-value 'a!)
+;; (parameter/get-value 'a)
+;; (parameter/get-value '(a! . 2))
+;; (parameter/get-value '(a . !))
+;; (parameter/get-value '(a! . _))
+
+(define (parameter-spec/base-parameter-alist pspec) ; returns base case
   ;; '((a . psym) (b . #f) ...)
-  ;; TO ADD HERE:
-  ;; 1. checking for parameteric dependencies base on the list
-  ;; 2. negation based resolution
+  (define (get-parameter-sym psym)
+    (define (unnegate x)
+      (let ((y (symbol->string x)))
+        (if (string= (string-take-right y 1) "!")
+            (string->symbol (string-drop-right y 1))
+            (string->symbol y))))
+    (match psym
+      [(a b ...) (unnegate a)]
+      [(a . b) (unnegate a)]
+      [a (unnegate a)]))
+  (let* ((v1 (delete-duplicates
+              (map parameter/get-value
+                   (append
+                    (parameter-spec/defaults pspec)
+                    (parameter-spec/required pspec)))))
+         (v2 (map get-parameter-sym v1))
+         (v3 (delete-duplicates v2)))
+    (if (not (eq? v2 v3))
+        (begin
+          (throw "Duplicate parameters found! " v2)
+          '())
+        v1)))
 
 (define (parameter-spec/override-alist pspec plist))
   ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)

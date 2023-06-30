@@ -78,7 +78,7 @@
   make-package-parameter
   package-parameter?
   (name          package-parameter-name
-                 (sanitize sanitize-string-or-symbol))
+                 (sanitize sanitize-package-parameter-name))
   (type          package-parameter-type (default boolean))
   ;; ;; the standard transforms; of the form (list ((build-system ...) transform))
   ;; ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
@@ -113,10 +113,18 @@
 (define %global-parameters
   (alist->hash-table '()))
 
-(define (sanitize-string-or-symbol x)
-  (cond ((string? x) (string->symbol x))
-        ((symbol? x) x)
+(define (sanitize-package-parameter-name x)
+  (cond ((string? x)
+         (if (string= (string-take-right x 1) "!")
+             (throw "Negation in parameter name!" x) ; we cannot have negation in parameter name!
+             (string->symbol x)))
+        ((symbol? x)
+         (if (string= (string-take-right (symbol->string x) 1) "!")
+             (throw "Negation in parameter name!" x) ; we cannot have negation in parameter name!
+             x))
         (else (throw 'bad! x))))
+
+;; (sanitize-package-parameter-name 'x!)
 
 ;; (define (sanitize-build-system-transforms ls)
 (define (sanitize-build-system-morphisms ls)
@@ -134,17 +142,17 @@
      (cons (cons 'a b)
            (lots-of-cons->alist rest ...)))))
 
-(define-syntax build-system/transform
-  (syntax-rules (-> _)
-    ((build-system/transform (x ...) -> y ...)
-     (map (lambda (g)
-            (cons g (lots-of-cons->alist y ...)))
-          (list x ...)))
-    ((build-system/transform _ -> y ...) ; for local parameter definitions
-     (cons 'any ; matches any build system
-      (lots-of-cons->alist y ...)))
-    ((build-system/transform x -> y ...)
-     (cons x (lots-of-cons->alist y ...)))))
+;; (define-syntax build-system/transform
+;;   (syntax-rules (-> _)
+;;     ((build-system/transform (x ...) -> y ...)
+;;      (map (lambda (g)
+;;             (cons g (lots-of-cons->alist y ...)))
+;;           (list x ...)))
+;;     ((build-system/transform _ -> y ...) ; for local parameter definitions
+;;      (cons 'any ; matches any build system
+;;       (lots-of-cons->alist y ...)))
+;;     ((build-system/transform x -> y ...)
+;;      (cons x (lots-of-cons->alist y ...)))))
 
 ;; Parameter Morphisms:
 ;; (parameter/morphism
@@ -199,7 +207,7 @@
                          (cons g parsed-morphisms))
                        (return-list 'sym))))]))
     
-;; (parameter/morphism (1 2 3) + (a b c) -> #:transform m1 #:rewrite m2 m3 #:modify c3)
+;; (parameter/morphism (! _ 3) + (a b c) -> #:transform m1 #:rewrite m2 m3 #:modify c3)
 
 ;; look into more efficient ways to store this data
 
