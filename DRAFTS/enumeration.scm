@@ -180,20 +180,23 @@
 ;; New Resolver:
 ;;   Must account for non-booleans and !
 
+(define (unnegate-symbol x)
+  (let ((y (symbol->string x)))
+    (if (string= (string-take-right y 1) "!")
+        (string->symbol (string-drop-right y 1))
+        (string->symbol y))))
+
+(define (get-parameter-sym psym)
+  (match psym
+     [(a b ...) (unnegate-symbol a)]
+     [(a . b) (unnegate-symbol a)]
+     [a (unnegate-symbol a)]))
+;; TEST: (get-parameter-sym '(x! . y))
+ 
+
 (define (parameter-spec/all-parameters pspec) ; for the UI
   ;; '(sym-a sym-b ...)
-  (define (get-parameter-sym psym)
-    (define (unnegate x)
-      (let ((y (symbol->string x)))
-        (if (string= (string-take-right y 1) "!")
-            (string->symbol (string-drop-right y 1))
-            (string->symbol y))))
-    (match psym
-       [(a b ...) (unnegate a)]
-       [(a . b) (unnegate a)]
-       [a (unnegate a)]))
-  ;; TEST: (get-parameter-sym '(x! . y))
-  (map get-parameter-sym ; we do not care about the values
+ (map get-parameter-sym ; we do not care about the values
        (delete-duplicates
         (append ; works same as before
          (map (lambda (x) (package-parameter-name x))
@@ -216,7 +219,7 @@
          (or (parameter-type-negation (package-parameter-type (parameter/get-parameter x)))
              (throw "Negation not supported for parameter " x))))
   (define (parameter-default-value x)
-    'match-any)
+    '%match-any)
     ;; (cadr (parameter-type-universe (package-parameter-type (parameter/get-parameter x)))))
   (define (parameter-negated-value x)
     (parameter-type-negation (package-parameter-type (parameter/get-parameter x))))
@@ -225,11 +228,6 @@
       (if (eqv? x neg)
           (parameter-default-value p)
           neg)))
-  (define (unnegate x)
-    (let ((y (symbol->string x)))
-      (if (string= (string-take-right y 1) "!")
-          (string->symbol (string-drop-right y 1))
-          (string->symbol y))))
   (match psym
     [(a '!) (parameter/get-value (cons a (parameter-negated-value a)))]
     [(a . '!) (parameter/get-value (cons a (parameter-negated-value a)))]
@@ -237,11 +235,11 @@
     ;; perhaps should leave them as special characters
     [(a '_) (parameter/get-value (cons a (parameter-default-value a)))]
     [(a . '_) (parameter/get-value (cons a (parameter-default-value a)))]
-    [((? negated-sym? a) b) (cons (unnegate a) (parameter-opposite (unnegate a) b))]
+    [((? negated-sym? a) b) (cons (unnegate-symbol a) (parameter-opposite (unnegate-symbol a) b))]
     [(a b) (cons a b)]
-    [((? negated-sym? a) . b) (cons (unnegate a) (parameter-opposite (unnegate a) b))]
+    [((? negated-sym? a) . b) (cons (unnegate-symbol a) (parameter-opposite (unnegate-symbol a) b))]
     [(a . b) (cons a b)]
-    [(? negated-sym? a) (cons (unnegate a) (parameter-negated-value (unnegate a)))]
+    [(? negated-sym? a) (cons (unnegate-symbol a) (parameter-negated-value (unnegate-symbol a)))]
     [a (cons a (parameter-default-value a))]
     [_ (throw "Bad parameter definition: " psym)]))
 
@@ -251,18 +249,10 @@
 ;; (parameter/get-value '(a . !))
 ;; (parameter/get-value '(a! . _))
 
+
+
 (define (parameter-spec/base-parameter-alist pspec) ; returns base case
   ;; '((a . psym) (b . #f) ...)
-  (define (get-parameter-sym psym)
-    (define (unnegate x)
-      (let ((y (symbol->string x)))
-        (if (string= (string-take-right y 1) "!")
-            (string->symbol (string-drop-right y 1))
-            (string->symbol y))))
-    (match psym
-      [(a b ...) (unnegate a)]
-      [(a . b) (unnegate a)]
-      [a (unnegate a)]))
   (let* ((v1 (delete-duplicates
               (map parameter/get-value
                    (append
@@ -276,16 +266,72 @@
           '())
         v1)))
 
-(define (parameter-spec/override-alist pspec plist))
+(define (parameter-spec/override-alist pspec plist)
   ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)
   ;; B: OFF[(DIFF PSPEC/ALL A)]
   ;; A + B
   ;; needs to be rewritten to handle non-boolean overrides
-
-(define (parameter-spec/validate-parameter-alist pspec plist) ; #t or #f
-  (define (validate/logic)) ; defined as functions - want to call them individually
-  ;; must validate non-booleans as well
-  ;; must validate ! as well
+  (define (negate-cell p)
+    (define (negv x)
+      (let ((negx (unnegate-symbol x)))
+        (if (eqv? x negx)
+            (string->symbol
+             (string-append (symbol->string x) "!"))
+            negx)))
+    (match p
+      ((a . b) (cons (negv a) b)
+       (a (negv a)))))
+  (let* ((allp (parameter-spec/all-parameters pspec))
+         (plist+all (map parameter/get-value ; intersect plist pspec/all
+                         (delete-duplicates
+                          (filter (lambda (x) (member (unnegate-symbol
+                                                  (match x ((a . b) a) (a a)))
+                                                 allp))
+                                  plist))))
+         (base-minus-plist (filter (lambda (x)
+                                     (not (member x plist+all)))
+                                   (parameter-spec/base-parameter-alist pspec)))
+         (total-positive (append plist+all base-minus-plist))
+         (total-not-positive (map parameter/get-value
+                                  (map negate-cell
+                                       (return-list
+                                        (delete-duplicates
+                                         (filter (lambda (x) (not (member (match x
+                                                                       ((a . b) a)
+                                                                       (a a))
+                                                                     total-positive)))
+                                                 allp)))))))
+    (append total-positive total-not-positive)))
+         
+;; XXX: (define parameter->negative, takes pspec, finds parameter and gives type negative)
+(define (parameter-spec/validate-parameter-alist pspec oplist)
+  ;; oplist -> overriden plist!
+  ;; this fn returns #t or #f with error to stdout
+  (define (validate/logic) ; *critical* function
+    (let ((OPLH (alist->hash-table oplist)))
+      (define (satisfying? cell)
+        (let ((cell-hval (hash-ref OPLH (car cell)))
+              (cell-aval (cadr cell)))
+          (or (and (eqv? cell-hval '%match-any)
+                   (not (eqv? (cadr cell)
+                              (parameter->negative pspec (car cell)))))
+              (eqv? call-hval call-aval))))
+      ;; equivalent to applying and over the list
+      (fold (lambda (x y) (and x y)) #t
+            ;; check if all required values are satisfied
+            (append
+            (return-list
+            (map satisfying?
+                 (map parameter/get-value ; required alist
+                      (return-list (parameter-spec/required pspec)))))
+            (return-list
+             (map (lambda (ls)
+                    (> 2 (length)
+                       (filter satisfying?
+                               (map parameter/get-value ls))))
+                  (list (return-list (parameter-spec/one-of pspec)))))
+            ;; Next: validate dependencies
+            ))))
   (define (validate/duplicates)
     ;; add functionality to cancel out x and x!
     (define (validate/not-there? x lst)
