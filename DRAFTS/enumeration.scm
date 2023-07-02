@@ -249,7 +249,20 @@
 ;; (parameter/get-value '(a . !))
 ;; (parameter/get-value '(a! . _))
 
-
+(define (parameter/get-dependencies total deps)
+    (let ((streamlined-deps (map (match-lambda
+                                   ((a . x) (cons (map parameter/get-value (return-list a))
+                                                  x)))
+                                 deps))
+          (valid-deps (filter (lambda (x)
+                             (> 0
+                                (count
+                             (lset-intersect eqv?
+                                             (car x)
+                                             total))))
+                              streamlined-deps)))
+      (cdr (filter (lambda (x) (eqv? (car x) 'parameters))
+                   valid-deps))))
 
 (define (parameter-spec/base-parameter-alist pspec) ; returns base case
   ;; '((a . psym) (b . #f) ...)
@@ -258,13 +271,16 @@
                    (append
                     (parameter-spec/defaults pspec)
                     (parameter-spec/required pspec)))))
-         (v2 (map get-parameter-sym v1))
-         (v3 (delete-duplicates v2)))
-    (if (not (eq? v2 v3))
+         (v2 (append
+              (return-list (parameter/get-dependencies v1 (parameter-spec/dependencies pspec)))
+              v1))
+         (v3 (map get-parameter-sym v2))
+         (v4 (delete-duplicates v3)))
+    (if (not (eq? v3 v4))
         (begin
-          (throw "Duplicate parameters found! " v2)
+          (throw "Duplicate parameters found! " v3)
           '())
-        v1)))
+        v2)))
 
 (define (parameter-spec/override-alist pspec plist)
   ;; A: (INTERSECT PLIST PSPEC/ALL) + (DIFF PSPEC/BASE PLIST)
@@ -281,6 +297,7 @@
     (match p
       ((a . b) (cons (negv a) b)
        (a (negv a)))))
+  
   (let* ((allp (parameter-spec/all-parameters pspec))
          (plist+all (map parameter/get-value ; intersect plist pspec/all
                          (delete-duplicates
@@ -300,14 +317,18 @@
                                                                        ((a . b) a)
                                                                        (a a))
                                                                      total-positive)))
-                                                 allp)))))))
-    (append total-positive total-not-positive)))
+                                                 allp))))))
+         (total (append total-positive total-not-positive))
+         (dependencies (parameter/get-dependencies total (parameter-spec/dependencies pspec))))
+    (append total dependencies)))
          
 ;; XXX: (define parameter->negative, takes pspec, finds parameter and gives type negative)
 (define (parameter-spec/validate-parameter-alist pspec oplist)
   ;; oplist -> overriden plist!
   ;; this fn returns #t or #f with error to stdout
   (define (validate/logic) ; *critical* function
+    ;;; XXX: validate dependencies
+    ;;; as of now, the overriden list contains all deps
     (let ((OPLH (alist->hash-table oplist)))
       (define (satisfying? cell)
         (let ((cell-hval (hash-ref OPLH (car cell)))
@@ -329,23 +350,14 @@
                     (> 2 (length)
                        (filter satisfying?
                                (map parameter/get-value ls))))
-                  (list (return-list (parameter-spec/one-of pspec)))))
-            ;; Next: validate dependencies
-            ))))
+                  (list (return-list (parameter-spec/one-of pspec)))))))))
   (define (validate/duplicates)
-    ;; add functionality to cancel out x and x!
-    (define (validate/not-there? x lst)
-      (if (not (member x lst))
-          (if (> (length lst) 1)
-              (validate/not-there? (car lst) (cdr lst))
-              #t)
-          #f))
-    (let ((alist-p (map car plist)))
-      (validate/not-there? (car alist-p) (cdr alist-p))))
+    (let ((cars (map parameter/get-parameter-sym oplist)))
+      (eqv? cars (delete-duplicates cars))))
   (define (validate/coverage)
     ;; add support for values
     (let ((all-p (parameter-spec/all-parameters pspec))
-          (alist-p (map car plist)))
+          (alist-p (map car oplist)))
       (fold (lambda (x y) (and x y)) #t
             (map (lambda (x) (not (not (member x alist-p))))
                  all-p))))
