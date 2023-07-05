@@ -505,10 +505,10 @@
      (cons 'parameter-spec
            (parameter-spec body ...))]))
 
-(define (transform-for-build-system parameter-transforms the-build-system)
-  (or (hash-ref parameter-transforms the-build-system)
-      (hash-ref parameter-transforms 'any)
-      (throw 'bad! the-build-system)))
+;; (define (transform-for-build-system parameter-transforms the-build-system)
+;;   (or (hash-ref parameter-transforms the-build-system)
+;;       (hash-ref parameter-transforms 'any)
+;;       (throw 'bad! the-build-system)))
 
 (define-syntax package-with-parameters
   (syntax-rules ()

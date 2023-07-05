@@ -1,0 +1,55 @@
+#+TITLE:Parser Redesign
+* Why?
+The current parser design needs to be changed in a few places to accommodate enumerated parameters.
+Furthermore, the current processing pipeline is making mistakes while reading negated parameters.
+* Current Pipeline
+RESOLVE-PARAMETER-ALIST takes a PSPEC and a PLIST, then overrides the PLIST according to PSPEC after which the overridden PLIST is validated.
+* Issues
+Previously, we didn't have syntactic sugar in the form of "p!" and "_".
+This processing is happening in multiple places, which is causing problems.
+* Solution - New Pipeline
+** 1. Fetching
+First, we will fetch the base parameter alist of the PSPEC.
+This will reuse the old functions with slight modification.
+** 2. Processing
+Both the base parameter alist and the PLIST will be processed to convert syntactic sugar into a proper parameter alist.
+Again, the same function will be used with a few small changes.
+*** What is a proper parameter alist?
+A proper parameter alist is one of the form ~'((PSYM VAL) (PSYM VAL) ...)~ where the ~PSYM~ is not of the form ~sym!~ and the ~VAL~ is not of the form ~_~ or ~!~.
+*** Steps for Processing
+1. ~PSYM~ are turned into cons cells of the form ~(PSYM . %match-any)~
+2. ~(list PSYM VAL)~ are turned into ~(PSYM . VAL)~
+3. Syntactic sugar in ~VAL~ is first converted to ~%match-any~ and ~%match-none~.
+4. All parameters of form ~sym!~ have their ~VAL~ changed;
+   - All positive values are changed to ~%match-none~
+   - ~%match-none~ is changed to ~%match-any~
+5. *(NEW)* Contraction: if many ~PSYM~ match, we will first remove duplicates.
+   - more than 2 remain: ~DUPLICATE~ error is thrown.
+   - 2 remain, one is ~%match-any~: the value becomes the other value
+   - 2 remain, none is ~%match-any~: ~DUPLICATE~ error is thrown.
+*** Validating the Resulting List                                       :new:
+The resulting list will be validated at this phase itself.
+This is done at step 5 of processing through the contraction.
+** 3. Overriding
+*** Fetching All Parameters
+The function fetching all parameters works fine. No changes are needed.
+In the future, it might be worth getting dependency parameters too.
+*** Only keeping PLIST values whose car is in the ALL-PARAMETERS list
+*** The remaining values are added at this step
+**** Method for adding                                               :new:
+- negation is supported: ~%match-none~ is added
+- negation is NOT supported: ~%match-all~ is added
+** 4. Funneling                                                         :new:
+This is a new step in the process where ~%match-any~ and ~%match-none~ values will be converted to proper values in steps.
+*** The Steps
+1. ~SUB-PLIST~: the sublist of ~PLIST~ with cons cells whose ~cdr~ is either ~%match-any~ or ~%match-none~.
+2. ~%match-none~: all the ~%match-none~ are converted to the proper negated values. If negation is not supported
+3. ~REQUIRED~: first and foremost, the ~REQUIRED~ values are funneled.
+4. ~ONE-OF~: for the remaining values, the default (first) value is tried first.
+   Binary types are put into an "inactive" list, while the remaining are permuted until a satisfactory value is reached.
+5. ~RE-COMBINATION~: ~PLIST*~ = ~SUB-PLIST*~ + ~SUB-PLIST'~
+** 5. Validation
+The final ~PLIST~ is checked for ~LOGIC~, ~DUPLICATION~ and ~COVERAGE~.
+The same procedures can be used but with some functionality removed.
+** 6. Final Output
+If the complete ~PLIST~ fails the final validation check, an error will be signaled and the base parameter alist will be returned. Otherwise, the final ~PLIST~ is returned.

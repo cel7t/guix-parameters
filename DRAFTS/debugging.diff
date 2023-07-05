@@ -1,0 +1,192 @@
+29d28
+<   #:use-module (srfi srfi-26)
+39,40c38,39
+<             parameter/morphism
+<             parameter/morphism-match
+---
+>             build-system/transform
+>             build-system/transform-match
+77,100d75
+< (define (give-me-a-symbol ex)
+<   (cond ((symbol? ex) ex)
+<         ((string? ex) (string->symbol ex))
+<         (else (throw 'bad! ex))))
+< 
+< (define-record-type* <parameter-type> parameter-type
+<   make-parameter-type
+<   parameter-type?
+<   this-parameter-type
+<   (name          parameter-type-name
+<                  (sanitize give-me-a-symbol))
+<   (universe      parameter-type-universe)
+<   (negation      parameter-type-negation
+<                  (default (car (parameter-type-universe this-parameter-type)))
+<                  (thunked))
+<   (description   parameter-type-description
+<                  (default "")))
+< 
+< (define boolean
+<   (parameter-type
+<    (name 'boolean)
+<    (universe '(off on))
+<    (description "Boolean Parameter Type")))
+< 
+107,108c82
+<   (type          package-parameter-type
+<                  (default boolean))
+---
+>   (type          package-parameter-type (default boolean))
+115,116c89
+<   (morphisms     package-parameter-morphisms
+<                  (default '())
+---
+>   (morphisms     (default (alist->hash-table '()))
+159c132,134
+<   (cond ((list? ls) ls)
+---
+>   (cond ((hash-table? ls) ls)
+>         ((list? ls)
+>          (alist->hash-table ls))
+400c375
+< ;;  ;; here parameter is not negated and package-variant is defined
+---
+> ;;  ;; here parameter is not negated and package-variant is defined 
+492c467
+<   (use-morphisms parameter-spec/use-morphisms ;; only use morphisms for these
+---
+>   (use-transforms parameter-spec/use-morphisms ;; only use morphisms for these
+520a496,501
+> (define boolean
+>   (parameter-type
+>    (name 'boolean)
+>    (universe '(off on))
+>    (description "Boolean Parameter Type")))
+> 
+527,530c508,511
+< (define (transform-for-build-system parameter-transforms the-build-system)
+<   (or (hash-ref parameter-transforms the-build-system)
+<       (hash-ref parameter-transforms 'any)
+<       (throw 'bad! the-build-system)))
+---
+> ;; (define (transform-for-build-system parameter-transforms the-build-system)
+> ;;   (or (hash-ref parameter-transforms the-build-system)
+> ;;       (hash-ref parameter-transforms 'any)
+> ;;       (throw 'bad! the-build-system)))
+664c645
+<   (or (find (lambda (x)
+---
+>   (or (find? (lambda (x)
+669c650
+<       (throw 'parameter-not-found psym)))
+---
+>       (throw "Parameter not found: " psym)))
+704d684
+706,707c686,688
+<     (string=? (string-take-right (symbol->string x) 1) "!"))
+---
+>     (and (string=? (string-take-right (symbol->string x) 1) "!")
+>          (or (parameter-type-negation (package-parameter-type (parameter/get-parameter pspec x)))
+>              (throw "Negation not supported for parameter " x))))
+709d689
+713d692
+716d694
+755c733
+<     (cdr (return-list (find (lambda (x) (eqv? (car x) 'parameters))
+---
+>     (cdr (filter (lambda (x) (eqv? (car x) 'parameters))
+759d736
+764,766c741,742
+<                     (return-list (parameter-spec/defaults pspec))
+<                     (return-list (parameter-spec/required pspec))))))
+---
+>                     (parameter-spec/defaults pspec)
+>                     (parameter-spec/required pspec)))))
+770d745
+780d754
+793,795c767,769
+<       ((a . b) (cons (negv a) b))
+<        (a (negv a))))
+< 
+---
+>       ((a . b) (cons (negv a) b)
+>        (a (negv a)))))
+>   
+798c772
+---
+>                          (delete-duplicates
+803d776
+807,808d779
+810,811d780
+821,822d789
+824d790
+826,827d791
+844d807
+848,849c811
+<       (define (satisfying? any-sym cell) ; any-sym: deliberately fail in one-of
+---
+>       (define (satisfying? cell)
+851,852c813,814
+<               (cell-aval (cdr cell))) ; cells will always be pairs!
+<           (or (and (eqv? cell-hval any-sym)
+---
+>               (cell-aval (cadr cell)))
+>           (or (and (eqv? cell-hval '%match-any)
+854c816
+<                        (not (eqv? cell-aval
+---
+>                        (not (eqv? (cadr cell)
+856,862c818
+<               (and (eqv? cell-aval any-sym)
+<                    (or (not (parameter->supports-negation? (car cell)))
+<                        (not (eqv? cell-hval
+<                                   (parameter->negative (car cell))))))
+<               (eqv? cell-hval cell-aval))))
+---
+>               (eqv? call-hval call-aval))))
+864c820
+---
+>       (fold (lambda (x y) (and x y)) #t
+867,868c823,824
+<               (map (cut satisfying? '%match-any <>)
+---
+>              (return-list
+>               (map satisfying?
+873,883c829,832
+<                      (> 2 (length
+<                         (filter (lambda (x)
+<                                   (satisfying? '%match-none x))
+<                                 (map (cut parameter/get-value pspec <>) ls)))))
+<                    (parameter-spec/one-of pspec)))))))
+---
+>                      (> 2 (length)
+>                         (filter satisfying?
+>                                 (map (cut parameter/get-value pspec <>) ls))))
+>                    (list (return-list (parameter-spec/one-of pspec)))))))))
+885,888c834
+<     (let ((cars (map get-parameter-sym oplist)))
+---
+>     (let ((cars (map parameter/get-parameter-sym oplist)))
+919d864
+1230a1176,1193
+> (define (give-me-a-symbol ex)
+>   (cond ((symbol? ex) ex)
+>         ((string? ex) (string->symbol ex))
+>         (else (throw 'bad! ex))))
+> 
+> (define-record-type* <parameter-type> parameter-type
+>   make-parameter-type
+>   parameter-type?
+>   this-parameter-type
+>   (name          parameter-type-name
+>                  (sanitize give-me-a-symbol))
+>   (universe      parameter-type-universe)
+>   (negation      parameter-type-negation
+>                  (default (car (parameter-type-universe this-parameter-type)))
+>                  (thunked))
+>   (description   parameter-type-description
+>                  (default "")))
+> 
+1260c1223
+< ;;
+---
+> ;; 
