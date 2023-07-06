@@ -545,7 +545,95 @@
 (define (package-parameter-spec package)
   (or (assq-ref (package-properties package) 'parameter-spec)
       '()))
- 
+
+;;; PROCESSING PIPELINE
+
+;; % HELPER FUNCTIONS %
+
+(define (return-list lst)
+  (or (and (list? lst) lst)
+      (list lst)))
+
+(define (append-everything . things)
+  (apply append
+         (map return-list things)))
+
+(define (get-parameter-sym psym)
+  (match psym
+    [(a . b) a]
+    [a a]))
+
+;; 1. Fetching
+
+(define (parameter-spec/base-parameter-alist pspec) ; returns base case
+  ;; '((a . psym) (b . #f) ...)
+  (let* ((v1 (parameter/process-list ; returns funneled list
+              (append-everything
+                    (parameter-spec/defaults pspec)
+                    (parameter-spec/required pspec))))
+         (v2 (parameter/process-list
+              (append-everything
+               (parameter/get-dependencies v1 pspec)
+               v1))))
+         ;; funnel will signal duplication err
+    v2))
+
+;; 2. Processing
+
+(define (parameter/process-list lst)
+  (define (unexclaim p) ; step 1
+    (define (negated-sym? p)
+      (string=? (string-take-right (symbol->string (car (return-list p))) 1) "!"))
+    (match p
+      ;; Signal error if p! is in a cell
+      [((? negated-sym? a) . b) (throw 'negation-in-cell! p)]
+      [(a . b) p] ; normal cells are OK
+      [(? negated-sym? a) (cons (string->symbol
+                                 (string-drop-right (symbol->string a) 1))
+                                '%match-none)]
+      [_ p]))
+  (define (cellulize p) ; step 2 + 3
+    (match p
+      [(a b) (cons a b)]
+      [(a . b) p]
+      [a (cons a '%match-any)]))
+  (define (desugarize p) ; step 4
+    (match p
+      [(a . '_) (cons a '%match-any)]
+      [(a . '!) (cons a '%match-none)]
+      [_ p]))
+  (define (funnel lst) ; step 5
+    ;; first we will get a list indexed by keys
+    (define (group-val carry lst)
+      (if (null-list? lst)
+          carry
+          (let ((v (assq-ref carry (caar lst))))
+            (group-val
+             (assq-set! carry (caar lst)
+                        (if v
+                            (cons (cdar lst) v)
+                            ;; We want a list in cdr
+                            (cons (cdar lst) '())))
+             (cdr lst)))))
+    (define (figure-out p)
+      (or (and (< (length p) 3)
+               (or (and (eq? (length p) 1) (car p))
+                   (and (member '%match-any p)
+                        (car (delq '%match-any p)))))
+          (throw 'too-many-elements! p)))
+    (map (lambda (x) (cons (car x)
+                      (figure-out
+                       (delete-duplicates (cdr x)))))
+         (group-val '() lst)))
+;;  (funnel (list (cons 1 2)
+;;                (cons 3 4)
+;;                (cons 1 '%match-any)
+;;                (cons 3 '%match-any)
+;;                (cons 1 '%match-any)))
+  (funnel (map (lambda (x)
+                 (desugarize (cellulize (unexclaim x))))
+               lst)))
+  
 ;; %global-parameters: hash table containing global parameters ref'd by syms
 
 (define-syntax define-global-parameter
