@@ -8,21 +8,20 @@ RESOLVE-PARAMETER-ALIST takes a PSPEC and a PLIST, then overrides the PLIST acco
 Previously, we didn't have syntactic sugar in the form of "p!" and "_".
 This processing is happening in multiple places, which is causing problems.
 * Solution - New Pipeline
-** 1. Fetching
+** DONE 1. Fetching
 First, we will fetch the base parameter alist of the PSPEC.
 This will reuse the old functions with slight modification.
-** 2. Processing
+** DONE 2. Processing
 Both the base parameter alist and the PLIST will be processed to convert syntactic sugar into a proper parameter alist.
 Again, the same function will be used with a few small changes.
 *** What is a proper parameter alist?
 A proper parameter alist is one of the form ~'((PSYM VAL) (PSYM VAL) ...)~ where the ~PSYM~ is not of the form ~sym!~ and the ~VAL~ is not of the form ~_~ or ~!~.
 *** Steps for Processing
-1. ~PSYM~ are turned into cons cells of the form ~(PSYM . %match-any)~
-2. ~(list PSYM VAL)~ are turned into ~(PSYM . VAL)~
-3. Syntactic sugar in ~VAL~ is first converted to ~%match-any~ and ~%match-none~.
-4. All parameters of form ~sym!~ have their ~VAL~ changed;
-   - All positive values are changed to ~%match-none~
-   - ~%match-none~ is changed to ~%match-any~
+1. *(CHANGED)* ~PSYM~ of the form ~p!~ will throw an error if they are in a cell,
+   return ~(p . %match-none)~ otherwise.
+2. ~PSYM~ are turned into cons cells of the form ~(PSYM . %match-any)~
+3. ~(list PSYM VAL)~ are turned into ~(PSYM . VAL)~
+4. Syntactic sugar in ~VAL~ is first converted to ~%match-any~ and ~%match-none~.
 5. *(NEW)* Contraction: if many ~PSYM~ match, we will first remove duplicates.
    - more than 2 remain: ~DUPLICATE~ error is thrown.
    - 2 remain, one is ~%match-any~: the value becomes the other value
