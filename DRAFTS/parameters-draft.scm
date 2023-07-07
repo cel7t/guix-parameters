@@ -563,6 +563,14 @@
     [(a . b) a]
     [a a]))
 
+
+(define (paramerer-spec/negation-supported? pspec x)
+  (let ((negv
+         (parameter-type-negation (parameter/paramerer-type (parameter-spec/get-parameter pspec x)))))
+    (if negv
+        negv
+        %match-all)))
+
 ;; 1. Fetching
 
 (define (parameter-spec/base-parameter-alist pspec) ; returns base case
@@ -634,6 +642,42 @@
                  (desugarize (cellulize (unexclaim x))))
                lst)))
   
+;; 3. Overriding
+
+;; This will get us all the parameters
+(define (parameter-spec/all-parameters pspec) ; for the UI
+  ;; '(sym-a sym-b ...)
+  (delete-duplicates
+   (map get-parameter-sym ; we do not care about the values
+        (append-everything ; works same as before
+         (map package-parameter-name
+              (parameter-spec/local pspec))
+         (parameter-spec/defaults pspec)
+         (parameter-spec/required pspec)
+         ;; We are NOT pulling dependencies at this phase
+         ;; They will not be influenced by the user parameter alist
+         (apply append (parameter-spec/one-of pspec))
+         (parameter-spec/optional pspec)))))
+
+;; Now we compare it against the PLIST
+(define (parameter-spec/override-plist pspec plist)
+  (let* ((all-p (parameter-spec/all-parameters pspec))
+         (filtered-plist (filter (lambda (x) (member (car x) all-p))
+                                 (parameter/process-list plist)))
+         (filtered-car (map car filtered-plist))
+         (remaining-p (filter (lambda (x) (not (member x filtered-car)))
+                              all-p)))
+    (append-everything filtered-plist
+                       (map (lambda (x) (if (paramerer-spec/negation-supported? pspec x)
+                                       (cons x %match-none)
+                                       (cons x %match-all)))
+                            remaining-p))))
+
+;; 4. Funneling
+;; process-list will work
+
+;; 5. Validation
+
 ;; %global-parameters: hash table containing global parameters ref'd by syms
 
 (define-syntax define-global-parameter
