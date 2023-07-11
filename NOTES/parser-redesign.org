@@ -29,7 +29,7 @@ A proper parameter alist is one of the form ~'((PSYM VAL) (PSYM VAL) ...)~ where
 *** Validating the Resulting List                                       :new:
 The resulting list will be validated at this phase itself.
 This is done at step 5 of processing through the contraction.
-** 3. Overriding
+** DONE 3. Overriding
 *** Fetching All Parameters
 The function fetching all parameters works fine. No changes are needed.
 In the future, it might be worth getting dependency parameters too.
@@ -38,7 +38,7 @@ In the future, it might be worth getting dependency parameters too.
 **** Method for adding                                               :new:
 - negation is supported: ~%match-none~ is added
 - negation is NOT supported: ~%match-all~ is added
-** 4. Funneling                                                         :new:
+** TODO 4. Funneling                                                   :new:
 This is a new step in the process where ~%match-any~ and ~%match-none~ values will be converted to proper values in steps.
 *** The Steps
 1. ~SUB-PLIST~: the sublist of ~PLIST~ with cons cells whose ~cdr~ is either ~%match-any~ or ~%match-none~.

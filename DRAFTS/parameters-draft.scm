@@ -106,12 +106,6 @@
                  (sanitize sanitize-package-parameter-name))
   (type          package-parameter-type
                  (default boolean))
-  ;; ;; the standard transforms; of the form (list ((build-system ...) transform))
-  ;; ;; sanitizer converts ((a b) t1 t2 t3) -> (a t*) (b t*) where t* is the composition of t1 t2 ...
-  ;; ;; this is an alist, the parser will handle the special keyword `all` as applicable to all systems.
-  ;; (transforms    package-parameter-transforms
-  ;;                (default (alist->hash-table '()))
-  ;;                (sanitize sanitize-build-system-transforms))
   (morphisms     package-parameter-morphisms
                  (default '())
                  (sanitize sanitize-build-system-morphisms))
@@ -125,15 +119,6 @@
   ;; 6/15: just use parameter-spec/defaults
   ;; (default? package-parameter-default? (default #f))
   (description   package-parameter-description (default "")))
-
-;; Type of a package parameter.
-;; (define-record-type* <parameter-type> parameter-type
-;;   make-parameter-type
-;;   parameter-type?
-;;   (name          parameter-type-name)              ;debugging purposes only!
-;;   (string->value parameter-type-string->value)
-;;   (value->string parameter-type-value->string)
-;;   (universe      parameter-type-universe))
 
 ;; SANITIZERS
 
@@ -563,6 +548,16 @@
     [(a . b) a]
     [a a]))
 
+;; Convention:
+;;   Works on Parameters? -> parameter-spec/fun
+;;   Works on Parameter-Spec? -> parameter-spec/fun
+(define (parameter-spec/get-parameter pspec psym)
+  (or (find (lambda (x)
+               (eqv? psym
+                     (package-parameter-name x)))
+             (parameter-spec/local pspec))
+      (hash-ref %global-parameters psym)
+      (throw "Parameter not found: " psym)))
 
 (define (paramerer-spec/negation-supported? pspec x)
   (let ((negv
@@ -610,7 +605,7 @@
       [(a . '_) (cons a '%match-any)]
       [(a . '!) (cons a '%match-none)]
       [_ p]))
-  (define (funnel lst) ; step 5
+  (define (funnel plst) ; step 5
     ;; first we will get a list indexed by keys
     (define (group-val carry lst)
       (if (null-list? lst)
@@ -632,7 +627,7 @@
     (map (lambda (x) (cons (car x)
                       (figure-out
                        (delete-duplicates (cdr x)))))
-         (group-val '() lst)))
+         (group-val '() plst)))
 ;;  (funnel (list (cons 1 2)
 ;;                (cons 3 4)
 ;;                (cons 1 '%match-any)
@@ -674,9 +669,59 @@
                             remaining-p))))
 
 ;; 4. Funneling
-;; process-list will work
 
+(define (parameter-spec/override-multi-match pspec plst)
+  (map
+    (match-lambda
+      [(a . '%match-any)
+       (cons a
+             (cadr (parameter-type-universe (package-parameter (parameter-spec/get-parameter pspec a)))))]
+      [(a . '%match-none)
+       (cons a
+             (parameter-type-negation (package-parameter (parameter-spec/get-parameter pspec a))))]
+      [cell cell])
+    plst))
+   
 ;; 5. Validation
+
+(define (parameter-spec/validate pspec plst)
+  (define (m+eqv? new-val orig-val)
+    (or (eqv? orig-val '%match-any)
+        (eqv? orig-val new-val)))
+  ;; first we check duplication
+  ;; a bit unnecessary
+  (define (validate/duplication)
+    (let ((symlst (map car plst)))
+      (unless (eqv? symlst (delete-duplicates symlst))
+        (throw 'duplicates plst))))
+        
+  ;; logic checking checks for:
+  ;;   - presence of required parameters
+  ;;   - 'one-of' conflicts
+  ;;   - dependency satisfaction
+  (define (validate/logic)
+    (map ; required
+     (lambda (x)
+       (unless
+           (m+eqv? (assq-ref plst (car x))
+                 (cdr x))
+         (throw 'unsatisfied-requirement x)))
+     (parameter/process-list
+      (parameter-spec-required pspec)))
+    (map ; one-of
+     (lambda (ls)
+       (unless
+           (= 1
+              (count
+               (lambda (x)
+                 (m+eqv? (assq-ref plst (car x))
+                       (cdr x)))
+               (parameter/process-list ls)))
+         (throw 'one-of-unsatisfied ls)))
+     (parameter-spec-one-of pspec))
+    ;; dependencies
+    
+
 
 ;; %global-parameters: hash table containing global parameters ref'd by syms
 
@@ -994,7 +1039,7 @@
   (syntax-rules (_)
     [(% _ rest ...)
      (parameter/type (string-append (or (package-parameter-name this-package-parameter)
-                                        "blank")
+                                        "%blank")
                                     "-type")
                      rest ...)]
     [(% t-name t-universe)

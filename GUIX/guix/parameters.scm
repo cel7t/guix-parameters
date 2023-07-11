@@ -642,7 +642,7 @@
 ;;         (cons #f (parameter-spec/parameter-alist pspec)))))
 
 (define (parameter/get-parameter pspec psym)
-  (or (find? (lambda (x)
+  (or (find (lambda (x)
                (eqv? psym
                      (package-parameter-name x)))
              (parameter-spec/local pspec))
