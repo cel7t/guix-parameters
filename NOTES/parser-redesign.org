@@ -38,7 +38,7 @@ In the future, it might be worth getting dependency parameters too.
 **** Method for adding                                               :new:
 - negation is supported: ~%match-none~ is added
 - negation is NOT supported: ~%match-all~ is added
-** TODO 4. Funneling                                                   :new:
+** DONE 4. Funneling                                                   :new:
 This is a new step in the process where ~%match-any~ and ~%match-none~ values will be converted to proper values in steps.
 *** The Steps
 1. ~SUB-PLIST~: the sublist of ~PLIST~ with cons cells whose ~cdr~ is either ~%match-any~ or ~%match-none~.
@@ -47,8 +47,8 @@ This is a new step in the process where ~%match-any~ and ~%match-none~ values wi
 4. ~ONE-OF~: for the remaining values, the default (first) value is tried first.
    Binary types are put into an "inactive" list, while the remaining are permuted until a satisfactory value is reached.
 5. ~RE-COMBINATION~: ~PLIST*~ = ~SUB-PLIST*~ + ~SUB-PLIST'~
-** 5. Validation
+** DONE 5. Validation
 The final ~PLIST~ is checked for ~LOGIC~, ~DUPLICATION~ and ~COVERAGE~.
 The same procedures can be used but with some functionality removed.
-** 6. Final Output
+** DONE 6. Final Output
 If the complete ~PLIST~ fails the final validation check, an error will be signaled and the base parameter alist will be returned. Otherwise, the final ~PLIST~ is returned.

@@ -343,49 +343,6 @@
         (throw 'bad! x)])
      ls)))
 
-;; (define (transform-sanitizer lv)
-;;  (lambda (ls)
-;;    (if (list? ls)
-;;        (map (lambda (x)
-;;               (if (eqv? #t (cdr x))
-;;                   (cond
-;;                    ((package-parameter? (car x))
-;;                     (cons (package-parameter-name (car x))
-;;                           (package-parameter-morphisms (car x))))
-;;                    ((symbol? (car x))
-;;                     (cons (car x)
-;;                           (package-parameter-morphisms
-;;                            (or
-;;                             (find (lambda (g) (eqv? (car x)
-;;                                                     (package-parameter-name g)))
-;;                                   lv)
-;;                             (hash-ref %global-parameters (car x))
-;;                             (throw 'bad! (car x))))))
-;;                    ((string? (car x))
-;;                     (let ((y (string->symbol (car x))))
-;;                       (cons y
-;;                             (or
-;;                              (find (lambda (g) (eqv? y
-;;                                                      (package-parameter-name g)))
-;;                                    lv)
-;;                              (hash-ref %global-parameters y)
-;;                              (throw 'bad! y))))))
-;;                   x))
-;;             ls)
-;;        (throw 'bad! ls))))
-
-;; two types of dependencies:
-;; pkg variant dependencies
-;; parameter dependencies
-;;
-;; (parameter/dependency-match
-;;  ((parameter sym) -> #:parameters (parameter-b sym) ... #:packages (package morphisms) ...)
-;;  ;; this also works:
-;;  (parameter -> #:parameters parameter-b ... #:packages package-variant ...)
-;;  ;; here parameter is not negated and package-variant is defined
-;;  ((parameter parameter-c (parameter-d val) ...) -> parameter-b ...))
-;;  ((parameter parameter-c (parameter-d val) ...) -> parameter-b ...))
-
 (define-syntax parameter/dependency
   (lambda (defn)
     (syntax-case defn (->)
@@ -566,6 +523,17 @@
         negv
         %match-all)))
 
+(define (parameter-spec/get-dependencies pspec lst)
+  (apply
+   append
+   (map
+    (lambda (x)
+      (cons x
+            (assq-ref
+             (assq-ref (parameter-spec-dependencies pspec) x)
+             'parameters)))
+    lst)))
+
 ;; 1. Fetching
 
 (define (parameter-spec/base-parameter-alist pspec) ; returns base case
@@ -576,7 +544,7 @@
                     (parameter-spec/required pspec))))
          (v2 (parameter/process-list
               (append-everything
-               (parameter/get-dependencies v1 pspec)
+               (parameter-spec/get-dependencies pspec v1)
                v1))))
          ;; funnel will signal duplication err
     v2))
@@ -628,15 +596,10 @@
                       (figure-out
                        (delete-duplicates (cdr x)))))
          (group-val '() plst)))
-;;  (funnel (list (cons 1 2)
-;;                (cons 3 4)
-;;                (cons 1 '%match-any)
-;;                (cons 3 '%match-any)
-;;                (cons 1 '%match-any)))
   (funnel (map (lambda (x)
                  (desugarize (cellulize (unexclaim x))))
                lst)))
-  
+
 ;; 3. Overriding
 
 ;; This will get us all the parameters
@@ -685,43 +648,79 @@
 ;; 5. Validation
 
 (define (parameter-spec/validate pspec plst)
-  (define (m+eqv? new-val orig-val)
-    (or (eqv? orig-val '%match-any)
-        (eqv? orig-val new-val)))
-  ;; first we check duplication
-  ;; a bit unnecessary
-  (define (validate/duplication)
-    (let ((symlst (map car plst)))
-      (unless (eqv? symlst (delete-duplicates symlst))
-        (throw 'duplicates plst))))
-        
-  ;; logic checking checks for:
-  ;;   - presence of required parameters
-  ;;   - 'one-of' conflicts
-  ;;   - dependency satisfaction
-  (define (validate/logic)
-    (map ; required
-     (lambda (x)
-       (unless
-           (m+eqv? (assq-ref plst (car x))
-                 (cdr x))
-         (throw 'unsatisfied-requirement x)))
-     (parameter/process-list
-      (parameter-spec-required pspec)))
-    (map ; one-of
-     (lambda (ls)
-       (unless
-           (= 1
-              (count
-               (lambda (x)
-                 (m+eqv? (assq-ref plst (car x))
-                       (cdr x)))
-               (parameter/process-list ls)))
-         (throw 'one-of-unsatisfied ls)))
-     (parameter-spec-one-of pspec))
-    ;; dependencies
-    
+  ;; We want all tests to run
+  (let ((works? #t))
 
+    (define (m+eqv? new-val orig-val)
+      (or (eqv? orig-val '%match-any)
+          (eqv? orig-val new-val)))
+
+    (define (throw+f sym vals)
+      (display "Error: ")
+      (display sym)
+      (display " with values ")
+      (display vals)
+      (newline)
+      (set! works? #f))
+    
+    ;; first we check duplication
+    ;; a bit unnecessary
+    (define (validate/duplication)
+      (let ((symlst (map car plst)))
+        (unless (eqv? symlst (delete-duplicates symlst))
+          (throw+f 'duplicates plst))))
+    
+    ;; logic checking checks for:
+    ;;   - presence of required parameters
+    ;;   - 'one-of' conflicts
+    ;;   - dependency satisfaction
+    (define (validate/logic)
+      (map ; required
+       (lambda (x)
+         (unless
+             (m+eqv? (assq-ref plst (car x))
+                     (cdr x))
+           (throw+f 'unsatisfied-requirement x)))
+       (parameter/process-list
+        (parameter-spec-required pspec)))
+      (map ; one-of
+       (lambda (ls)
+         (unless
+             (= 1
+                (count
+                 (lambda (x)
+                   (m+eqv? (assq-ref plst (car x))
+                           (cdr x)))
+                 (parameter/process-list ls)))
+           (throw+f 'one-of-unsatisfied ls)))
+       (parameter-spec-one-of pspec))
+      (map ; dependencies
+       (lambda (x)
+         (let ([deplst (parameter/process-list
+                        (assq-ref
+                         (assq-ref (parameter-spec-dependencies pspec) x)
+                         'parameters))])
+           (map
+            (lambda (y)
+              (unless (m+eqv? (assq-ref plst (car y))
+                              (cdr y))
+                (throw+f 'dependency-unsatisfied y)))
+            deplst)))
+       plst))
+
+    (validate/duplication)
+    (validate/logic)
+    works?))
+
+(define (parameter-spec/resolve-list pspec plst)
+  (let ([proper-plst (parameter-spec/override-multi-match
+                      pspec
+                      (parameter-spec/override-plist
+                       pspec
+                       (parameter/process-list plst)))])
+    (if (parameter-spec/validate pspec proper-plst)
+        proper-plst
+        (parameter-spec/base-parameter-alist pspec))))
 
 ;; %global-parameters: hash table containing global parameters ref'd by syms
 
@@ -738,26 +737,38 @@
 ;;                           (description "no tests")))
 ;; Works!
 
+(define-syntax parameter/inside?
+  (syntax-rules ()
+    [(% p plst)
+     (not
+      (eqv? (or (assq-ref plst p)
+                (error "Parameter not found!"))
+            (parameter-type-negation
+             (package-parameter-type
+              (parameter-spec/get-parameter
+               (package-parameter-spec this-package)
+               p)))))]))
+                
 (define-syntax parameter/if
   (syntax-rules ()
     [(parameter/if property exp)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (if (list? property)
-               (member
-                #t
-                (map (lambda (x) (not (not (assq-ref properties x))))
-                     property))
-               (assq-ref properties property))
+     (let ((properties
+            (parameter-spec/parameter-alist
+             (package-parameter-spec this-package))))
+       (if (member
+            #t
+            (map (cut parameter/inside? <> properties)
+                 (parameter/process-list (return-list property))))
            exp
            '()))]
     [(parameter/if property exp exp-else)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (if (list? property)
-               (member
-                #t
-                (map (lambda (x) (not (not (assq-ref properties x))))
-                     property))
-               (assq-ref properties property))
+     (let ((properties
+            (parameter-spec/parameter-alist
+             (package-parameter-spec this-package))))
+       (if (member
+            #t
+            (map (cut parameter/inside? <> properties)
+                 (parameter/process-list (return-list property))))
            exp
            exp-else))]))
 
@@ -765,37 +776,36 @@
   (syntax-rules ()
     [(parameter/if-all property exp)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (if (list? property)
-               (not (member
+       (if (not (member
                      #f
-                     (map (lambda (x) (not (not (assq-ref properties x))))
-                          property)))
-               (assq-ref properties property))
+            (map (cut parameter/inside? <> properties)
+                 (parameter/process-list (return-list property)))))
            exp
            '()))]
     [(parameter/if-all property exp exp-else)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (if (list? property)
-               (not (member
+       (if (not (member
                      #f
-                     (map (lambda (x) (not (not (assq-ref properties x))))
-                          property)))
-               (assq-ref properties property))
+            (map (cut parameter/inside? <> properties)
+                 (parameter/process-list (return-list property)))))
            exp
            exp-else))]))
 
 ;; Test these macros without using packages:
-;; (define (parameter-spec/parameter-alist _) '((a . 1) (b . 2) (c . 3)))
+;; (define (parameter-spec/parameter-alist _)
+;;   (list (cons 'a 1)
+;;         (cons 'b 2)
+;;         (cons 'c 3)))
 ;; (define (package-parameter-spec _) #t)
 ;; (define this-package '())
 
-;; (parameter/if '(a b e)
+;; (parameter/if '(a (b 3))
 ;;       "YES"
 ;;       "NO")
 
-;; (parameter/if-all '(a b e)
-;;           (display "NO")
-;;           (display "YES"))
+;; (parameter/if-all '(a (b 3))
+;;           "NO"
+;;           "YES)
 
 ;; parameter/match-any:
 ;; (parameter/match-any
@@ -811,14 +821,14 @@
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
-         (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
+         (and (member #t (map (cut parameter/inside? <> properties)
                               (list parameters ...)))
               (begin clauses ...))
          (parameter/match-any rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
-         (and (not (not (assq-ref properties parameter)))
+         (and (parameter/inside? parameter properties)
               (begin clauses ...))
          (parameter/match-any rest ...)))]))
 
