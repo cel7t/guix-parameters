@@ -1,0 +1,25 @@
+#+TITLE:Mockup for Parameterization
+* Easy-to-use DSL
+#+BEGIN_SRC scheme
+  (parameterize some-package
+    (p1 p2 p3g* (p4g v1)^ ...)
+    (if p1 exp)
+    (cond (p5g exp2)
+          ((p2 v2) exp3)))
+#+END_SRC
+Design Considerations:
+** Majority of the users will want to modify existing packages
+*** If a user wants to make a new package, just put the package at ~some-package~
+** No need to specify parameter types.
+*** They will be inferred through the package's code
+** Bangs (!) must be used for negation.
+** ~if~ and ~cond~ treated as ~parameter/if~ and ~parameter/cond~
+** parameter/match also accessible through ~match~
+** input modification will be done through the parameter/modify-inputs macro
+** global parameters automatically found
+*** * indicates global parameters not in the form but in the spec
+*** all local parameters are specified in the list after the package name
+** Morphisms only used for global parameters
+*** ^ symbol used to indicate "use morphism"
+*** * not necessary if ^ is used
+*** if is a cons cell, cdr value is assumed to be activation value

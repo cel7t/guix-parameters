@@ -102,23 +102,17 @@
 (define-record-type* <package-parameter> package-parameter
   make-package-parameter
   package-parameter?
-  (name          package-parameter-name
-                 (sanitize sanitize-package-parameter-name))
-  (type          package-parameter-type
-                 (default boolean))
-  (morphisms     package-parameter-morphisms
-                 (default '())
-                 (sanitize sanitize-build-system-morphisms))
-
-  ;; SCOPE FOR IMPROVEMENT:
-  ;; another field for package-input-rewriting called 'rewrite'
-  ;; consult Pjotr and Gabor about this
-
-  ;; ONLY TO BE USED IN LOCAL DEFINITIONS
-  ;; if set to #t, parameter is considered default
-  ;; 6/15: just use parameter-spec/defaults
-  ;; (default? package-parameter-default? (default #f))
-  (description   package-parameter-description (default "")))
+  (name         package-parameter-name
+                (sanitize sanitize-package-parameter-name))
+  (type         package-parameter-type
+                (default boolean))
+  (morphisms    package-parameter-morphisms
+                (default '())
+                (sanitize sanitize-build-system-morphisms))
+  (dependencies package-parameter-dependencies ; 7/14
+                (default '())
+                (thunked))
+  (description  package-parameter-description (default "")))
 
 ;; SANITIZERS
 
@@ -421,9 +415,10 @@
   ;; (dependencies (parameter/dependencies
   ;;                   (a b -> d e f)
   ;;  	               (c -> g h)))
-  (dependencies parameter-spec/dependencies
-                (default '())
-                (thunked))
+  ;; (dependencies parameter-spec/dependencies
+  ;;               (default '())
+  ;;               (thunked))
+  ;; 7/14 : Moved to the package-parameter record
   (canonical parameter-spec/canonical-combinations
              (default parameter-spec/defaults)
              (thunked))
@@ -523,16 +518,22 @@
         negv
         %match-all)))
 
-(define (parameter-spec/get-dependencies pspec lst)
-  (apply
-   append
-   (map
-    (lambda (x)
-      (cons x
-            (assq-ref
-             (assq-ref (parameter-spec-dependencies pspec) x)
-             'parameters)))
-    lst)))
+;; (define (parameter-spec/get-dependencies pspec lst)
+;;   (apply
+;;    append
+;;    (map
+;;     (lambda (x)
+;;       (cons x
+;;             (assq-ref
+;;              (assq-ref (parameter-spec-dependencies pspec) x)
+;;              'parameters)))
+;;     lst)))
+(define (parameter-spec/get-dependencies psym)
+  (let ([p (parameter-spec/get-parameter pspec psym)])
+    (return-list
+     (assq-ref (package-parameter-dependencies p)
+               'parameters))))
+
 
 ;; 1. Fetching
 
@@ -544,7 +545,9 @@
                     (parameter-spec/required pspec))))
          (v2 (parameter/process-list
               (append-everything
-               (parameter-spec/get-dependencies pspec v1)
+               (apply append
+                      (map (cut parameter-spec/get-dependencies pspec <>)
+                           (return-list v1)))
                v1))))
          ;; funnel will signal duplication err
     v2))
@@ -694,19 +697,21 @@
                  (parameter/process-list ls)))
            (throw+f 'one-of-unsatisfied ls)))
        (parameter-spec-one-of pspec))
-      (map ; dependencies
-       (lambda (x)
-         (let ([deplst (parameter/process-list
-                        (assq-ref
-                         (assq-ref (parameter-spec-dependencies pspec) x)
-                         'parameters))])
-           (map
-            (lambda (y)
-              (unless (m+eqv? (assq-ref plst (car y))
-                              (cdr y))
-                (throw+f 'dependency-unsatisfied y)))
-            deplst)))
-       plst))
+      ;; XXX: Needs a per-parameter rewrite
+      ;; (map ; dependencies
+      ;;  (lambda (x)
+      ;;    (let ([deplst (parameter/process-list
+      ;;                   (assq-ref
+      ;;                    (assq-ref (parameter-spec-dependencies pspec) x)
+      ;;                    'parameters))])
+      ;;      (map
+      ;;       (lambda (y)
+      ;;         (unless (m+eqv? (assq-ref plst (car y))
+      ;;                         (cdr y))
+      ;;           (throw+f 'dependency-unsatisfied y)))
+      ;;       deplst)))
+      ;;  plst)
+      )
 
     (validate/duplication)
     (validate/logic)
@@ -856,14 +861,14 @@
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
-         (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+         (and (not (member #f (map (cut parameter/inside? <> properties)
                                    (list parameters ...))))
               (begin clauses ...))
          (parameter/match-all rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
-         (and (not (not (assq-ref properties parameter)))
+         (and (parameter/inside? parameter properties)
               (begin clauses ...))
          (parameter/match-all rest ...)))]))
 
@@ -879,13 +884,13 @@
     [(% ((parameters ...)) rest ...) (parameter/match-case-any rest ...)]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+       (and (not (member #f (map (cut parameter/inside? <> properties)
                                  (list parameters ...))))
             (begin clauses ...)
             (parameter/match-case-any rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (and (not (not (assq-ref properties parameter)))
+       (and (parameter/inside? parameter properties)
             (begin clauses ...)
             (parameter/match-case-any rest ...)))]))
 
@@ -911,21 +916,21 @@
     [(% ((all parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
-         (and (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+         (and (not (member #f (map (cut parameter/inside? <> properties)
                                    (list parameters ...))))
               (begin clauses ...))
          (parameter/match rest ...)))]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
-         (and (member #t (map (lambda (x) (not (not (assq-ref properties x))))
+         (and (member #t (map (cut parameter/inside? <> properties)
                               (list parameters ...)))
               (begin clauses ...))
          (parameter/match rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
-         (and (not (not (assq-ref properties parameter)))
+         (and (parameter/inside? parameter properties)
               (begin clauses ...))
          (parameter/match rest ...)))]))
 
@@ -943,19 +948,19 @@
     [(% (parameters) rest ...) (parameter/match-case rest ...)]
     [(% ((all parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (not (member #f (map (lambda (x) (not (not (assq-ref properties x))))
+       (if (not (member #f (map (cut parameter/inside? <> properties)
                                 (list parameters ...))))
            (begin clauses ...)
            (parameter/match-case rest ...)))]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (member #t (map (lambda (x) (not (not (assq-ref properties x))))
+       (if (member #t (map (cut parameter/inside? <> properties)
                            (list parameters ...)))
            (begin clauses ...)
            (parameter/match-case rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (not (not (assq-ref properties parameter)))
+       (if (parameter/inside? parameter properties)
            (begin clauses ...)
            (parameter/match-case rest ...)))]))
 
@@ -973,23 +978,21 @@
     [(% (all parameters ...) exp exp2)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (member #t
-                   (map (lambda (x) (not (not (assq-ref properties x))))
+                   (map (cut parameter/inside? <> properties)
                         (list parameters ...)))
            exp
            exp2))]
-    [(% (all parameter) exp exp2)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (assq-ref properties parameter))
-       exp
-       exp-else)]
+  ;;  [(% (all parameter) exp exp2) ; unnecessary
+  ;;   (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+  ;;     (if (parameter/inside? parameter properties)
+  ;;         exp
+  ;;         exp-else))]
     [(% parameter exp exp2)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
-       (if (if (list? parameter)
-               (member
+       (if (member
                 #t
-                (map (lambda (x) (not (not (assq-ref properties x))))
-                     parameter))
-               (assq-ref properties parameter))
+                (map (cut parameter/inside? <> properties)
+                     (return-list parameter)))
            exp
            exp2))]))
 

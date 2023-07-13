@@ -1,0 +1,25 @@
+#+TITLE:Values for Morphisms
+* Parameter Morphisms might require pulling parameter values or package names
+* For example, a generic without-tests will need the package name (~--without-tests=package-name~)
+* ~#:PACKAGE-NAME~ and ~#:PARAMETER-VALUE~ may be used for these
+* Seamlessly concatenate with strings in the ~cdr~
+* Using keywords makes it seamlessly extensible - no new syntax for new additions
+* Example
+Morphisms to compile a package without tests and with the master branch
+#+BEGIN_SRC scheme
+  (parameter/morphism #:transform (without-tests . #:PACKAGE-NAME)
+                                  (with-branch . #:PACKAGE-NAME "=master"))
+#+END_SRC
+Morphisms to compile a package with a GCC optimization level specified by an enumerated parameter
+#+BEGIN_SRC scheme
+  (parameter/morphism #:transform (with-configure-flag . "-O" #:PARAMETER-VALUE))
+#+END_SRC
+Note that capitalization of the keywords is purely for the purpose of emphasis.
+Another interesting thing to note is that ~#:parameter-value~ does not need any arguments.
+This is because ~morphism-match~ assigns morphisms parameter-wise, and we can pull the value from that.
+For example if we had a local ~branch~ morphism with values ~old~, ~master~ and ~stable~,
+#+BEGIN_SRC scheme
+  (parameter/morphism #:transform (with-branch . #:PACKAGE-NAME "=" #:PARAMETER-VALUE))
+#+END_SRC
+Will give us the precise value at the branch.
+* TODO Ask Pjotr and Gabor for more possible keywords
