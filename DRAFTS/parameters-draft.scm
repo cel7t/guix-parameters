@@ -112,6 +112,9 @@
   (dependencies package-parameter-dependencies ; 7/14
                 (default '())
                 (thunked))
+  ;; XXX: universal parameters don't need to be in the pspec
+  (universal?   package-parameter-universal?
+                (default #f))
   (description  package-parameter-description (default "")))
 
 ;; SANITIZERS
@@ -288,6 +291,11 @@
       (throw 'bad! ls)))
 
 ;; (use-modules (ice-9 match))
+
+;; morphism rewrite:
+;; ((a b) (c d))..
+;; (((a sym sym2) m) (b m2) ((c sym3)) (d))
+
 (define (morphism-sanitizer lv) ; ((a^ m) ((b sym) m2) c ((d sym1 sym2 ...) m3) ...)
   (define (default-morphism? psym) ; check if parameter is given as parameter^
     ;; TAKE SPECIAL CARE:
