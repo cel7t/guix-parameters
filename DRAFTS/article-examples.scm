@@ -19,8 +19,7 @@
    (name 'tests)
    (morphisms
     (parameter/morphism-match
-     (! -> #:transform (without-tests . #:package-name))
-     (_ -> #:transform (with-tests . #:package-name))))
+     (! -> #:transform (without-tests . #:package-name))))
    (descrption "Toggle for tests")
    (universal? #t))
 
@@ -34,10 +33,13 @@
    (_ + gnu-build-system -> #:procedure
         `(package/inherit ,#:package
            (arguments
-            (substitute-keyword-arguments (package-arguments ,#:package)
+            (substitute-keyword-arguments
+             (package-arguments ,#:package)
               ((#:make-flags flags #~'())
-               #~(append #$flags
-                         (list (string-append "CFLAGS=" ,#:parameter-value)))))))))))
+               #~(append
+                  #$flags
+                  (list (string-append "CFLAGS="
+                                       ,#:parameter-value)))))))))))
 
 ;; Static
 ;; XXX: might be a better idea to use substitute-keyword-arguments
@@ -46,8 +48,8 @@
  (name 'static-lib)
  (morphisms
   (parameter/morphism-match
-   (_ -> (with-configure-flag . "--disable-shared")
-      (with-configure-flag . "--enable-static")))))
+   (_ -> (with-configure-flag #:package-name "=--disable-shared")
+         (with-configure-flag #:package-name "=--enable-static")))))
 
 ;; Arch
 ;;   --tune is the recommended way of building packages for a given architecture
@@ -56,7 +58,8 @@
 
 ;; Main Example
 (package-with-parameters
- [(local
+ [parameter-spec
+  (local
       (parameter/parameter-list
        'next
        ('tree-sitter #:dependencies '(next))
@@ -107,7 +110,7 @@
          #~(modify-phases #$phases
              (delete 'restore-emacs-pdmp)
              (delete 'strip-double-wrap))))]
-     [(#:and xwidgets pgtk!)
+     [(#:all xwidgets pgtk!)
       '(((#:configure-flags flags #~'())
          #~(cons "--with-xwidgets" #$flags))
         ((#:modules _) (%emacs-modules build-system))
