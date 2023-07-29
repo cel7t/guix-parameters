@@ -1,0 +1,127 @@
+#+TITLE:UI Design for Parameters
+* Goals
+** ~guix search~ and ~guix show~ should show parameters
+** ~guix parameter~ to find parameter types, combinations and more
+** ~guix parameter validate~ to validate a parameter list for a package
+** should support the usual options like ~-h~, ~-L~ etc
+* Guix Search
+~guix show racket~
+#+BEGIN_SRC
+name: racket
+version: 8.8
+parameters:
++ enabled: jpeg png x11 gcc-oflag@-O3
++ optional: minimal
+outputs:
++ out: everything
+systems: x86_64-linux
+dependencies: cairo@1.16.0* fontconfig-minimal@2.13.94 glib@2.70.2 glu@9.0.2 gmp@6.2.1 gtk+@3.24.30* libedit@20191231-3.1
++ libjpeg-turbo@2.0.5* libpng@1.6.37* libx11@1.7.3.1* mesa@21.3.8 mpfr@4.1.0 pango@1.48.10* racket-minimal@8.8 racket-vm-cs@8.8 unixodbc@2.3.9
+...
+#+END_SRC
+** * -> colored/bold highlight
+** /non-boolean/ enabled parameters have symbol next to them
+** dependencies pulled by parameters highlighted
+** non-default dependencies on separate heading, with parameter indexing
+Only /global/ parameter dependency shown
+#+BEGIN_SRC
+  parametric-dependencies:
+  + param-1: dep1 dep2
+  +   parameters: param-3
+  + param-2: dep4
+#+END_SRC
+In practice very few parameters will have global parameter or even package dependencies
+** extra combinations with substitutes
+#+BEGIN_SRC
+  combinations-with-substitutes:
+    (name): param1 param2 param3@value
+    (name2): param2
+#+END_SRC
+Non-default will be very rare, and this line will only be shown when that's the case
+* Guix Parameter
+** ~guix parameter global pkg~
+Time-consuming command that checks and gives a list of global parameters that'll work on pkg
+** ~guix parameter spec pkg~
+Returns a human-friendly analysis of the ~parameter-spec~ of ~pkg~.
+ex. ~(one-of _ x y)~ -> ~x or y or neither~
+#+BEGIN_SRC scheme
+  (parameter-spec
+   (local '(x y z))
+   (optional '(d e))
+   (one-of
+    '((_ x y)
+      ((x #:off) z)
+      (y (z 3))))
+   (use-variants
+    '(#:yes d
+      #:no (z 3)
+      #:special (e . (without-tests . #:package-name)))))
+#+END_SRC
+Becomes
+#+BEGIN_SRC
+  local: x y z*
+  global: d e
+  rules:
+    1. x or y or neither
+    2. not x or z
+    3. y or z@3
+  variants:
+    yes: d x y z*
+    no: z@3
+    special: e
+  number of combinatons: __
+#+END_SRC
+** ~guix parameter combinations pkg~
+Returns a list of legal combinations.
+Will implement later.
+Run with caution, this is a #P hard problem.
+** ~guix parameter show some-global-parameter~
+Returns human friendly analysis of the ~package-parameter~ record associated with ~some-global-parameter~
+#+BEGIN_SRC scheme
+(package-parameter
+     (name 'tests)
+     (variants
+      (parameter-variant-match
+       (#:off #:transform (without-tests #:package-name))))
+     (description "Toggle for tests")
+     (predicate #t))
+#+END_SRC
+Becomes
+#+BEGIN_SRC
+  name: tests
+  type: boolean
+  description:
+    Toggle for tests
+  variants:
+    1. off
+       transform: --without-tests="(the package's name)"
+  predicate:
+    Works on all packages (#t)
+#+END_SRC
+** ~guix parameter show pkg some-parameter~
+Same as the previous command, but with a local parameter in ~pkg~'s spec or a global parameter overridden by it.
+*** global parameter overridden?
+~use-variants~ can disable or replace the ~parameter-variants~ field of a global parameter.
+** ~guix parameter validate pkg "(a b ...)"~
+Takes a parameter list and runs it against pkg.
+Throws an error if it doesn't work, and the final list otherwise.
+** ~guix parameter type boolean-parameter-type~
+Human friendly analysis of a parameter type ~boolean-parameter-type~
+#+BEGIN_SRC scheme
+(define boolean-parameter-type
+  (parameter-type
+   (name 'boolean)
+   (accepted-values '(off on))
+   (description "Boolean Parameter Type")))
+#+END_SRC
+Becomes
+#+BEGIN_SRC
+  name: boolean
+  bound-to: boolean-parameter-type
+  accepted-values: off on
+  negation: off
+  default: on
+  description:
+    Boolean Parameter Type
+#+END_SRC
+*** TODO Find a way to search through parameter type names
