@@ -1,0 +1,46 @@
+#+TITLE:Updated Syntax for Parameterization
+#+AUTHOR:Sarthak Shah
+* Renaming ~parameter-type~'s ~universe~ to ~accepted-values~
+* Addition of ~default~ in ~parameter-type~
+A field known as ~default~ will be added to the ~parameter-type~ record.
+By default, it will be the *second* value in the ~accept-values~ list if ~negation~ is supported, and the first value otherwise.
+* Renaming ~morphisms~ to ~parameteric-variants~ (or something better)
+* Redo of ~morphism-match~
+#+BEGIN_SRC scheme
+  (parameter-spec-parameteric-variant-match ; no more + or ->
+    ((-O2 -O3) #:build-system (gnu-build-system lisp-build-system)
+               #:transform (without-tests #:package-name)))
+#+END_SRC
+Since we are using ~#:keywords~ for transforms, procedures etc. anyways, we could use these for build systems too. This will make the syntax more lisp-y.
+* Removing ~/~ and replacing it with ~-~
+Personally would still prefer ~/~ since it adds clarity, perhaps worth discussing with concrete examples.
+* Renaming ~universal~ to ~works-with-all-packages?~
+* No ~parameter-type/lambda~ macro
+This could cause confusions and misunderstandings.
+Could perhaps be added to the ease-of-use DSL later on, but will not be a part of this patch.
+* No ~->~ in ~dependency-match~, follow ~parameteric-variants-match~ syntax
+* No more ~!~. Use ~#:off~ to signal ~negation~ instead.
+in Scheme ~!~ is usually reserved for operations with side-effects, so it's a lot more sensible to use something like ~(psym #:off)~ for generic negation.
+Could later on add it to the ease-of-use DSL, but this patch will not have it.
+* Look into ways to avoid using a global hash-table for global parameters
+Arun's suggestion: Guile's parameterize
++ parameterize uses continuations and it could be a problem? as far as I know, guix does not use continuations anywhere due to memory leak concerns
+For the time being, we could stick to the hash-table as it is an implementation detail and will not affect the syntax.
+As of now ~define-global-parameter~ adds global parameters, and if a parameter with the given name already exists it throws an error. Global parameters can then be accessed by their names alone.
+This is very important as *all* of the parameter functions operate on *symbols*, and the only other way to get something from the symbol with its name is to use ~eval~, which is extremely taboo.
+* Regarding parameter-list syntax
+A lot of fields accept lists of parameters, be it parameteric conditionals or the fields in the parameter-spec. They all share a common syntax:
+#+BEGIN_SRC scheme
+  (list (cons 'parameter-symbol 'parameter-value)
+        (cons 'another-symbol 'another-value) ...)
+#+END_SRC
+As this can be a bit hard to write, any of the following are acceptable:
+#+BEGIN_SRC scheme
+  '((a v) (b v2) (c _)...)
+  '((a . v) (b . v2) (c . _) ...)
+  '((a v) (b v2) c ...) ; by default sym means (sym _)
+#+END_SRC
+Note that using ~.~ inside a list does not in fact generate an associated list.
+It creates a list of lists instead of a list of cons cells.
+In Scheme the only way to create an alist is to either use alist functions from ice-9 or to specify it with ~list~ and ~cons~ like in the previous example.
+No need to fret though, the processor converts all of these lists into lists of cons cells internally, and yes this feature has been implemented :)

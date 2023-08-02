@@ -134,13 +134,13 @@
          (alist->hash-table ls))
         (else (throw 'bad! ls))))
 
-(define-syntax lots-of-cons->alist
-  (syntax-rules ()
-    ((_ (a . b))
-     (list (cons 'a b)))
-    ((_ (a . b) rest ...)
-     (cons (cons 'a b)
-           (lots-of-cons->alist rest ...)))))
+;; (define-syntax lots-of-cons->alist
+;;   (syntax-rules ()
+;;     ((_ (a . b))
+;;      (list (cons 'a 'b)))
+;;     ((_ (a . b) rest ...)
+;;      (cons (cons 'a 'b)
+;;            (lots-of-cons->alist rest ...)))))
 
 ;; (define-syntax build-system/transform
 ;;   (syntax-rules (-> _)

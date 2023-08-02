@@ -1,0 +1,316 @@
+#+TITLE:Parameterized Packages: The Second Update
+#+AUTHOR:Sarthak Shah
+#+DATE: 2023-07-18 13:37
+#+TAGS: Guix, GSoC, Scheme
+#+OPTIONS: toc:nil num:nil
+#+HAUNT_BASE_DIR: /home/$USER/Documents/Code/Guile/blog
+
+This is the third entry in my series of blog posts about adding Parameterized Packages to [[https://guix.gnu.org/][GNU Guix]] for my [[https://summerofcode.withgoogle.com/programs/2023/projects/heQYLzrz][Google Summer of Code project]]. Parameterization here refers to making it possible for packages to be built with /compile-time options/, and I have gone over the reasons and benefits for doing so in detail in the [[https://blog.lispy.tech/an-introduction-to-parameterized-packages.html][first post about Parameterized Packages]].
+
+In the [[https://blog.lispy.tech/parameterized-packages-an-update.html][last update]] I talked about implementing support for /boolean/, /non-negative/ parameters. In this update, I've implemented negation, enumeration and a few other features that will make parameters considerably more powerful!
+
+* What's New
+A brief summary of additions is
++ Parametric Variants
++ Parameter Dependencies
++ 'Negation' for parameter types
++ Enumerated Types
+
+** Parametric Variants
+To make global parameters useful, it is necessary to be able to change the contents of a package in ways that [[https://guix.gnu.org/manual/devel/en/html_node/Package-Transformation-Options.html][Package Transformations]] might not be able to by themselves. Additionally, users might find themselves in situations where they wish to perform different operations for different values of an enumerated type.
+
+"Parametric Variants" refers to matching against enumerated values and using methods of [[https://guix.gnu.org/manual/en/html_node/Defining-Package-Variants.html][Defining Package Variants]], such as package transforms, ~modify-inputs~ and procedures that return packages. Parameters now have the ability to use any of these methods instead of just using transformations.
+
+For a better understanding of them, please look at any of the examples using the ~variant-match~ macro.
+
+** Parameter Dependencies
+It's possible that enabling a parameter might require enabling another parameter or a package.
+For such situations, I've added a new ~dependencies~ field to the parameter record that lets users specify parameters or packages a given parameter depends on. You can also fine-tune values for the parameter and the parameters in dependencies.
+
+** Negation and Enumeration
+*** Enumeration
+In the previous version, parameters could only be in two states: ~on~ and ~off~.
+This version makes it possible for parameters to take *multiple states*, as long as the user specifies all the possible states.
+This has a huge number of uses- for example, here's a parameter type for locales:
+#+BEGIN_SRC scheme
+  (define locale-parameter-type
+    (parameter-type
+     (name 'locale-type)
+     (accepted-values
+      '(ca_ES cs_CZ da_DK de_DE
+              el_GR en_AU en_CA en_GB
+              en_US es_AR es_CL es_ES
+              es_MX fi_FI fr_BE fr_CA
+              fr_CH fr_FR ga_IE it_IT
+              ja_JP ko_KR nb_NO nl_NL
+              pl_PL pt_PT ro_RO ru_RU
+              sv_SE tr_TR uk_UA vi_VN
+              zh_CN))
+     (negation #f)
+     (default 'en_US)
+     (description "Type for Locales")))
+#+END_SRC
+**** Explanation
+~parameter-type~ is the record type for parameter types.
+Please note that *parameter types* are different from *parameters*.
+Parameter types are similar to variable types (character, boolean, symbol etc.) and parameters are similar to variables as they possess a type.
+The fields of this record are
++ ~name~ which must be a symbol
+  Unlike parameters, parameter-types are identified by the symbol bound by ~define~ (here ~locale-parameter-type~) instead of their ~name~ field. The ~name~ field is purely for the sake of the Guix UI, while the bound name is what is used to utilize a record in a parameter.
+  So to use this record in a parameter record, you would put ~locale-parameter-type~ in its ~type~ field.
++ ~accepted-values~ which must be a list of symbols with /at least/ two elements.
+  This represents the entire set of values parameters belonging to this parameter type can take.
++ ~negation~ which returns the 'negative' element.
+  By default this is the first element of ~accepted-values~, and if it is set to ~#f~ like here then negation is not supported for that parameter. It will throw an error if a user tries negating the parameter.
+  Users can negate a parameter in a parameter list by using the ~#:off~ keyword:
+  #+BEGIN_SRC scheme
+  (list ... (parameter-name #:off) ...)
+  #+END_SRC
+  Normally, you would place a /value/ from ~accepted-values~ in the right part of the cell, however ~#:off~ gives the 'negative' value for all parameters that support negation.
++ ~default~ is a value taken by the parameter if the keyword ~#:default~ is used on it.
+  This works similar to negation, but you put ~#:default~ instead of a ~#:negation~ in the right part of the cell. In the case of ~default~, its default value is the second element of ~accepted-values~ if ~negation~ is not set to ~#f~, and the first element otherwise.
+  In our example, it is set to ~'en_US~.
++ ~description~ which provides a description of the parameter type.
+*** Negation
+/Negation/ refers to being able to specify the opposite value for a parameter.
+If it is set to anything but ~#f~ for a given ~parameter-type~ record, any ~package~ record belonging to that ~parameter-type~ takes on that value when set to the special keyword ~#:off~.
+Here's an example that uses it to run the ~without-tests~ transform on a package whenever the ~boolean~ parameter ~tests~ is set to ~#:off~.
+#+BEGIN_SRC scheme
+  (define-global-parameter
+    (package-parameter
+     (name 'tests)
+     (variants
+      (parameter-variant-match
+       (#:off #:transform (without-tests #:package-name))))
+     (description "Toggle for tests")
+     (predicate #t)))
+#+END_SRC
+**** Explanation
+~define-global-parameter~ is a macro that takes a parameter record and makes it global.
+This means that it can be referred to in any parameter definition, and that its ~name~ is guaranteed to be unique among all global parameters.
+~package-parameter~ is the record type for parameters. Please note that the record is *not* called ~parameter~, as it refers to something else entirely in Guile Scheme.
+The record accepts values for the fields ~name~, ~type~, ~variants~, ~predicate~ and ~description~.
++ ~name~ is a symbol, similar to ~parameter-type~'s ~name~ field.
+  However unlike ~parameter-type~'s ~name~, ~package-parameter~'s ~name~ is very significant.
+  We do not refer to parameters by any Scheme binding (through something like ~define~ or ~let~), as it could lead to unexpected errors in logic validation fields.
+  Parameters are only referred to by their ~name~ field, which is always unique for global parameters. If a global and local parameter share names, the local parameter is given preference. If two local parameters with the same name are added, an error will be signaled.
+  The user can hence rest assured that in the context of any given package, each ~name~ has a unique meaning.
++ ~type~ is the ~parameter-type~ to use as the basis for the parameter.
+  By default, it is set to ~boolean~ which consists of the states ~on~ and ~off~.
++ ~variants~ is an associative list that assigns transforms, procedures, valid build systems etc. to parameter values.
+  This replaces the ~transforms~ field from the last post.
+  Users are expected /not/ to write the alist themselves, but to instead use the ~parameter-variant-match~ macro that generates an alist based on a specification as seen here.
+  This macro is somewhat similar to the ~build-system/transform-match~ macro from the last post.
+  Users can also use ~parameter-variant~ if they want to match a single value.
+  ~#:off~ matches the 'negative' value for /any/ parameter, and ~_~ matches all non-negative values.
+  It is possible to match multiple values by putting them in a list like ~(_ #:off)~.
+  Note that here it would have been possible to use the /symbol/ ~off~ instead of the special keyword ~#:off~, as our parameter belongs to the ~boolean~ type and its negative value is ~off~. But it is a good idea to use ~#:off~ as it always matches against the negative symbol, regardless of the ~parameter-type~'s accepted values.
+  Users can also specify the build system the value should match, as seen in the ~gcc-oflag~ parameter in the Bonus Examples section.
+  This is not all there is to the magic of ~parameter-variant-match~;
+  to make parameterization more useful, it lets users get the package name, the package and the value of the parameter the statement matched against.
+  These are accessed through [[https://www.gnu.org/software/guile/manual/html_node/Keywords.html][keywords]], such as the ~#:package-name~ keyword in this argument.
+  Have a look at the ~gcc-oflag~ and ~static-lib~ parameters in [[*Bonus Examples]] to learn more!
++ ~predicate~ is set to ~#f~ by default.
+  ~#f~ means that the given parameter can only be used when its been mentioned in a package's ~parameter-spec~.
+  Setting this to ~#t~ means that a /global/ parameter can be applied to packages that do not have it in their spec. *This is extremely dangerous and should only be used for extremely generic parameters*.
+  Otherwise, the user may set this to any lambda that takes a ~package~ record as its argument and returns ~#t~ or ~#f~. The global parameter will be applied if this lambda returns ~#t~.
++ ~dependencies~ is a list of parameters and packages that a given parameter depends on. The list is punctuated by keywords to indicate parameter and package dependencies, with ~#:parameter~ and ~#:package~ respectively. If no keywords are given, the arguments are assumed to be parameters.
+  #+BEGIN_SRC scheme
+    (dependencies `(#:parameter a b ... #:package git ,(package (name "some-package") ...) ...))
+  #+END_SRC
++ ~description~ is a simple description of the parameter.
+* What does using parameters look like?
+Here is an example use-case for parameterization, which packages Emacs' ~next~, ~pgtk~, ~xwidgets~, ~wide-int~ and ~no-x~ variants in one package and also makes it possible to mix and match compatible variants.
+** Usage
+The usage format for parameters is the same as that for other package transforms- you specify them through the CLI. In the future, it will also be possible to have a global set of transforms.
+#+BEGIN_SRC bash
+  guix install emacs-parameterized \
+       --with-parameters=emacs-parameterized=pgtk=on \
+       --with-parameters=emacs-parameterized=tree-sitter=on \
+#+END_SRC
+** Underlying Code
+Under the hood, this is what the implementation looks like.
+#+BEGIN_SRC scheme
+(package-with-parameters
+ [parameter-spec
+  (local
+      (list
+       (package-parameter (name 'next))
+       (package-parameter (name 'tree-sitter)
+                          (dependencies '(tree-sitter)))
+       (package-parameter
+        (name 'pgtk)
+        (variants
+         (parameter-variant-match
+          (_ #:transform (with-configure-flag
+                          #:package-name "=--with-pgtk"))))
+        (dependencies '(tree-sitter x11)))
+       (package-parameter
+        (name 'xwidgets)
+        (variants
+         (parameter-variant-match
+          (_ #:transform (with-configure-flag
+                          #:package-name "=--with-xwidgets")))))
+       (package-parameter
+        (name 'wide-int)
+        (variants
+         (parameter-variant-match
+          (_ #:transform (with-configure-flag
+                          #:package-name "=--with-wide-int")))))))
+  (one-of '((_ (x11 #:off) pgtk)
+            (_ (x11 #:off) xwidgets)))]
+ (inherit emacs)
+ (name "emacs-parameterized")
+ (source
+  (parameter-if
+   'next
+   (origin
+    (inherit (package-source emacs))
+    (method git-fetch)
+    (uri (git-reference
+          (url "https://git.savannah.gnu.org/git/emacs.git/")
+          (commit (string-append "emacs-" version))))
+    (file-name (git-file-name name version))
+    (patches
+     (search-patches
+      "emacs-exec-path.patch"
+      "emacs-fix-scheme-indent-function.patch"
+      "emacs-native-comp-driver-options.patch"
+      (parameter-if 'pgtk
+                    "emacs-pgtk-super-key-fix.patch"
+                    nil)))
+    (sha256
+     (base32
+      "09jm1q5pvd1dc0xq5rhn66v1j235zlr72kwv5i27xigvi9nfqkv1")))
+   (origin
+    (inherit (package-source emacs)))))
+ (arguments
+  (substitute-keyword-arguments (package-arguments emacs)
+    (parameter-match
+     [((x11 #:off))
+      '(((#:configure-flags flags #~'())
+         #~(delete "--with-cairo" #$flags))
+        ((#:modules _) (%emacs-modules build-system))
+        ((#:phases phases)
+         #~(modify-phases #$phases
+             (delete 'restore-emacs-pdmp)
+             (delete 'strip-double-wrap))))]
+     [(#:all xwidgets (pgtk #:off))
+      '(((#:configure-flags flags #~'())
+         #~(cons "--with-xwidgets" #$flags))
+        ((#:modules _) (%emacs-modules build-system))
+        ((#:phases phases)
+         #~(modify-phases #$phases
+             (delete 'restore-emacs-pdmp)
+             (delete 'strip-double-wrap))))])))
+ (inputs
+  (parameter-modify-inputs
+   [(next) (prepend sqlite)]
+   [(tree-sitter) (prepend tree-sitter)]
+   [(xwidgets) (prepend gsettings-desktop-schemas
+                        webkitgtk-with-libsoup2)]
+   [((x11 #:off))
+    (delete "libx11" "gtk+" "libxft" "libtiff" "giflib" "libjpeg"
+            "imagemagick" "libpng" "librsvg" "libxpm" "libice" "libsm"
+            "cairo" "pango" "harfbuzz" "libotf" "m17n-lib" "dbus")])))
+#+END_SRC
+
+** Step-by-step Explanation
+1. ~package-with-parameters~
+   This macro takes a ~parameter-spec~ as its first argument and applies the parameter specification to the package in its body. The /default parameters/ are then activated within the package.
+2. ~parameter-spec~
+   This record type contains all of the logic necessary to declare and resolve parameters for a package. This normally goes inside the ~properties~ field of the ~package~ record.
+   In the previous post, it was necessary to put this record inside the properties, but now ~package-with-parameters~ handles that for us.
+   The parameter specification record contains various fields, all of which are optional.
+   I have gone over the fields in detail in the [[https://blog.lispy.tech/parameterized-packages-an-update.html][previous blog post]], hence I will not explain all of them in detail here.
+   The only big change is that ~one-of~ now has a functionality wherein if you start a list within it with ~_~, you can have a case where none of the values in it are positive. Otherwise, it throws an error as one and only one value is expected to be positive.
+   Also notice the usage of ~#:off~ to indicate negation.
+   We have also not declared ~x11~, which will hence be treated as a global parameter. In general global parameters must either have their ~predicate~ set to something that returns ~#t~ or be present /anywhere/ in the ~parameter-spec~ to be applicable. Users are advised to put them in the ~optional~ field, as it was created with this use case in mind.
+3. package body
+   Within the package body, we have the usual fields you would expect.
+   ~(inherit emacs)~ signifies that this package inherits all of emacs' base fields, and the rest of the fields are overrides of that.
+   Please note that the ~name~ field cannot be influenced by parameters as it is not ~thunked~.
+4. ~parameter-match~
+   This is an extremely useful macro which matches /all/ the parameter lists that has any positive parameters. It is also possible to require all the parameters in a list to be positive by using ~#:all~. Please keep in mind that it does not short-circuit by default like ~cond~. It will keep matching parameters until all the lists have been combed through. A short-circuiting version exists in the form of ~parameter-match-case~. I've gone over the functionality offered by this macro in detail in the [[https://blog.lispy.tech/parameterized-packages-an-update.html][previous blog post]], however it has one small improvement:
+   all conditionals now support checking if a parameter is set to a particular value instead of just checking if it is positive or not. This is very useful for enumerated types, where you might for example want to disable some features if and only if a parameter is set to the second positive value. To illustrate this, if you wanted to check whether a parameter ~y~ is set to ~v1~ or if the parameter list ~z~ is /non-negative/, the list would be ~((y v1) z)~.
+   You can also use this to check for the default or negative value, with ~(parameter-name #:default)~ and ~(parameter-name #:off)~ respectively. ~_~ is a similar special symbol which matches all /non-negative/ values, but it is not necessary to use it since the parameter name by itself, say ~parameter-name~ is the same as ~(parameter-name _)~.
+   We can see this in the ~((y v1) z)~ example above, where ~z~ is matching all non-negative values of ~z~ even though we did not specify it as ~(z _)~.
+   You can also use this in all of the fields in ~parameter-spec~ that require you to specify parameters. The parameter value list syntax is the same everywhere.
+I have gone over the rest of the conditionals in the  [[https://blog.lispy.tech/parameterized-packages-an-update.html][previous blog post]] too, they remain more or less the same with the exception that we use ~#:all~ inside lists instead of ~all~ like last time. This is to make it obvious at a glance that ~#:all~ is not a parameter like the rest of the list.
+* Bonus Examples
+Here are some bonus examples for enumerated parameters:
+** GCC Optimization Flags
+~gcc~ has a set of [[https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html][optimization flags]] that can be used to make programs faster or smaller at the expense of stability.
+This is a very basic attempt at adding that functionality to the ~gnu-build-system~ through the ~CFLAGS~ make-flag.
+#+BEGIN_SRC scheme
+(package-parameter
+ (name 'gcc-oflag)
+ (type
+  (parameter-type
+   (name '_)
+   (accepted-values '(-O0 -O1 -O2 -O3 -Os -Ofast -Og -Oz))
+   (negation #f)))
+ (variants
+  (parameter-variant-match
+   (_ #:build-system gnu-build-system
+      #:lambda
+      (package/inherit #:package
+        (arguments
+         (substitute-keyword-arguments
+          (package-arguments #:package)
+          ((#:make-flags flags #~'())
+           #~(append
+              #$flags
+              (list (string-append "CFLAGS="
+                                   #:parameter-value)))))))))))
+#+END_SRC
+** Static Libraries
+In [[https://hpc.guix.info/][High-Performance Computing]], it's often necessary to produce static builds of packages to share them with others. This parameter is a basic attempt at making it possible to do so with any given library.
+#+BEGIN_SRC scheme
+(package-parameter
+ (name 'static-lib)
+ (variants
+  (parameter-variant-match
+   (_ #:transform
+      (with-configure-flag #:package-name "=--disable-shared")
+      (with-configure-flag #:package-name "=--enable-static")))))
+#+END_SRC
+** Sneak Peak: A RESTful API for Parameterization
+I recently made a [[https://emacs.ch/@cel7t/110695688332787396][post on Mastodon]] that claimed that the real advantage of Guix is that it's extensible with [[https://www.gnu.org/software/guile/][Guile Scheme]]. To back up this claim, once parameters have been merged to trunk I'll be writing a set of tutorials on hacking Guix with Guile Scheme.
+One of these planned tutorials is going to be about writing a *RESTful API* using Guile that'll allow users to request a package with specific parameters.
+Here is what the ~POST~ request for this API may look like:
+#+BEGIN_SRC JSON
+  POST /test HTTP/1.1
+  Host: guix.example
+  Accept: application/json
+  Content-Type: application/json
+  Content-Length: 194
+
+  {
+    "User" : "guix-hacker",
+    "Package" : "emacs",
+    "Parameters" : [
+        { "Parameter" : "next",
+          "Value" : "on"},
+        { "Parameter" : "tree-sitter",
+          "Value" : "off"}
+			  ]
+  }
+#+END_SRC
+
+* Future work
+
+Here I have demonstrated a basic DSL that is more-or-less just S-expressions. There is however scope for making it a lot more convenient to use parameters, and thus there are plans on building a convenience syntax on top of this simple one.
+One example is using ~~parameter-name~ to indicate the negation of a parameter. However, syntax like this may not be obvious to everyone at a glance, which is why we have decided to make a convenience DSL with these features only after heavy deliberation and discussion.
+
+The next few updates will focus on the UI for Parameterization. The primary goals for the UI are to make it easy to discover parameterization options, tell what type a parameter is and to figure out parameter combinations that work for a given package.
+
+* Closing Thoughts
+
+ As can be seen with the Parameterized Emacs example in this post, parameterization will make it possible to join a large number of variations of packages and *reduce* the amount of code requiring maintenance. One of the aims of this project is to also create procedures that test parameter combinations and measure the combinatorial complexity brought about by parameterization, which should make testing parameteric variants easy too.
+ 
+ I expect parameterization to be particularly useful for running Guix on exotic hardware (such as static minimalistic targets) or on High-Performance Computing Systems (specific architecture optimizations) and make it generally easy to tailor a lot of packages for a particular system's requirements.
+ 
+ This update marks the completion of this Google Summer of Code project's midterms. I'd like to thank my mentors Pjotr Prins and Gábor Boskovit as well as Ludovic Courtès, Arun Isaac and Efraim Flashner for their guidance and help, without which I don't think I'd have been able to reach this milestone. I'm also very grateful to the many wonderful people in the Guix community that provided me with a lot of useful advice and suggestions.
+
+Stay tuned for updates, and happy hacking!
