@@ -118,6 +118,8 @@
   (dependencies package-parameter-dependencies ; 7/14
                 (default '())
                 (thunked))
+  (predicate    package-parameter-predicate
+                (default #f))
   (description  package-parameter-description (default "")))
 
 ;; TODO: Find a cleaner way to manage global parameters
@@ -726,7 +728,14 @@
 (define (parameter-spec-override-plist pspec plist)
   ;; (display "OVERRIDE")(newline)
   (let* ((all-p (all-spec-parameters pspec))
-         (filtered-plist (filter (lambda (x) (member (car x) all-p))
+         (filtered-plist (filter (lambda (x) (or (member (car x) all-p)
+                                            (and (hash-ref %global-parameters (car x))
+                                                 ((package-parameter-predicate
+                                                   (hash-ref %global-parameters (car x)))
+                                                  ;; NOTE:
+                                                  ;; <this-package> might not work
+                                                  ;; might have to capture it in pspec
+                                                  this-package))))
                                  (parameter-process-list plist)))
          (filtered-car (map car filtered-plist))
          (remaining-p (filter (lambda (x) (not (member x filtered-car)))
