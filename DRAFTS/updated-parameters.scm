@@ -43,22 +43,22 @@
             package-parameter-spec
             all-spec-parameters
             base-parameter-alist
-            parameter-spec/override-alist
-            parameter-spec/validate-parameter-alist
+            parameter-spec-override-plist
+            parameter-spec-validate
             spec-resolve-list
             %global-parameters
             define-global-parameter
 
             package-with-parameters
-            parameter-spec/parameter-alist
-            parameter/if
-            parameter/if-all
-            parameter/match-any
-            parameter/match-all
-            parameter/match-case-any
-            parameter/match
-            parameter/match-case
-            parameter/modify-inputs))
+            parameter-spec-parameter-alist
+            parameter-if
+            parameter-if-all
+            parameter-match-any
+            parameter-match-all
+            parameter-match-case-any
+            parameter-match
+            parameter-match-case
+            parameter-modify-inputs))
 
 ;;; Commentary:
 ;;;
@@ -140,7 +140,7 @@
 ;; (sanitize-package-parameter-name 'x!)
 
 ;; (define (sanitize-build-system-transforms ls)
-(define (sanitize-parameteric-variants ls)
+(define (sanitize-parametric-variants ls)
   ;; ((a . t1 t2 ...) ((b c) t3 t4 ...))
   (cond ((list? ls) ls)
         (else (throw 'bad! ls))))
@@ -463,10 +463,10 @@
 ;;                                                   morphism-list
 ;;                                                   (cons #:parameters morphism-list)))))
 ;;            (return-list 'p-lst))))])))
-;; 
+;;
 ;; ;; (parameter/dependency (a b) -> #:parameters a b #:packages d)
 ;; ;; (parameter/dependency (a (b yyy)) -> m n o)
-;; 
+;;
 ;; (define-syntax parameter/dependency-match
 ;;   (syntax-rules (:lock _ ->)
 ;;     ((% :lock (x ...))
@@ -743,7 +743,7 @@
   ;; (display "MULTIMATCH")(newline)
   (map
     (match-lambda
-      [(a . '_)
+      [(a . '_) ;; TODO: iterate through these!
        (cons a
              (cadr (parameter-type-accepted-values (package-parameter-type (parameter-spec-get-parameter pspec a)))))]
       [(a . #:off)
@@ -773,9 +773,10 @@
   (let ((works? #t))
 
     (define (m+eqv? new-val orig-val)
-      (display "VALS: ") (display new-val)
-      (display " ") (display orig-val) (newline)
-      (or (eqv? orig-val '_)
+      ;; (display "VALS: ") (display new-val)
+      ;; (display " ") (display orig-val) (newline)
+      (or (and (eqv? orig-val '_)
+               (not (eqv? new-val #:off)))
           (eqv? orig-val new-val)))
 
     (define (throw+f sym vals)
@@ -801,24 +802,37 @@
       (map ; required
        (lambda (x)
          (unless
-             (m+eqv? (assq-ref plst (car x))
-                     (cdr x))
+             (let ((new-val (assq-ref plst (car x))))
+               (m+eqv? (if (eqv?
+                             new-val
+                             (parameter-spec-negation-supported?
+                               pspec
+                               (car x)))
+                         #:off new-val)
+                       (cdr x)))
            (throw+f 'unsatisfied-requirement x)))
        (parameter-process-list ; cannot have duplicates here!
-        (parameter-spec/required pspec)))
+        (parameter-spec-required pspec)))
       (map ; one-of
        (lambda (ls)
          (unless
              (let ((satisfied (count
                                 (lambda (x)
-                                  (m+eqv? (assq-ref plst (car x))
-                                          (cdr x)))
+                                  (let ((new-val (assq-ref plst (car x))))
+                                    (m+eqv?
+                                      (if
+                                        (eqv? new-val
+                                              (parameter-spec-negation-supported?
+                                                pspec
+                                                (car x)))
+                                        #:off new-val)
+                                      (cdr x))))
                                 (process-multi-list ls)))) ; duplicates could happen!
                (or (= satisfied 1)
                    (and (= satisfied 0)
                         (eqv? (car ls) '_))))
            (throw+f 'one-of-unsatisfied ls)))
-       (parameter-spec/one-of pspec))
+       (parameter-spec-one-of pspec))
       ;; XXX: Needs a per-parameter rewrite
       ;; (map ; dependencies
       ;;  (lambda (x)
@@ -837,17 +851,17 @@
 
     (validate/duplication)
     (validate/logic)
-    (display "DOES IT WORK? ") (display works?) (newline)
+ ;;   (display "DOES IT WORK? ") (display works?) (newline)
     works?))
 
 (define (spec-resolve-list pspec plst)
   (let ([proper-plst (override-spec-multi-match
                       pspec
-                      (parameter-spec/override-plist
+                      (parameter-spec-override-plist
                        pspec
                        (parameter-process-list plst)))])
-    (display "TRIALS OVER?")(newline)
-    (if (parameter-spec/validate pspec proper-plst)
+   ;; (display "TRIALS OVER?")(newline)
+    (if (parameter-spec-validate pspec proper-plst)
         proper-plst
         (base-parameter-alist pspec))))
 
@@ -878,9 +892,9 @@
                (package-parameter-spec this-package)
                p)))))]))
 
-(define-syntax parameter/if
+(define-syntax parameter-if
   (syntax-rules ()
-    [(parameter/if property exp)
+    [(parameter-if property exp)
      (let ((properties
             (parameter-spec/parameter-alist
              (package-parameter-spec this-package))))
@@ -890,7 +904,7 @@
                  (parameter-process-list (return-list property))))
            exp
            '()))]
-    [(parameter/if property exp exp-else)
+    [(parameter-if property exp exp-else)
      (let ((properties
             (parameter-spec/parameter-alist
              (package-parameter-spec this-package))))
@@ -901,9 +915,9 @@
            exp
            exp-else))]))
 
-(define-syntax parameter/if-all
+(define-syntax parameter-if-all
   (syntax-rules ()
-    [(parameter/if-all property exp)
+    [(parameter-if-all property exp)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (not (member
                      #f
@@ -911,7 +925,7 @@
                  (parameter-process-list (return-list property)))))
            exp
            '()))]
-    [(parameter/if-all property exp exp-else)
+    [(parameter-if-all property exp exp-else)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (not (member
                      #f
@@ -928,41 +942,41 @@
 ;; (define (package-parameter-spec _) #t)
 ;; (define this-package '())
 
-;; (parameter/if '(a (b 3))
+;; (parameter-if '(a (b 3))
 ;;       "YES"
 ;;       "NO")
 
-;; (parameter/if-all '(a (b 3))
+;; (parameter-if-all '(a (b 3))
 ;;           "NO"
 ;;           "YES)
 
-;; parameter/match-any:
-;; (parameter/match-any
+;; parameter-match-any:
+;; (parameter-match-any
 ;; ((a b) e1 e2 ..)
 ;; ((c) d1 d2 ..)
 ;; (else c1 c2 ...))
 
-(define-syntax parameter/match-any
+(define-syntax parameter-match-any
   (syntax-rules (_)
     [(%) '()]
     [(% (_ clauses ...)) (begin clauses ...)]
-    [(% ((parameters ...)) rest ...) (parameter/match-any rest ...)]
+    [(% ((parameters ...)) rest ...) (parameter-match-any rest ...)]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (cut parameter-inside? <> properties)
                               (list parameters ...)))
               (begin clauses ...))
-         (parameter/match-any rest ...)))]
+         (parameter-match-any rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (parameter-inside? parameter properties)
               (begin clauses ...))
-         (parameter/match-any rest ...)))]))
+         (parameter-match-any rest ...)))]))
 
 ;; (let ((SOME_ALIST_FOR_THIS_EXAMPLE '()))
-;;   (parameter/match-any
+;;   (parameter-match-any
 ;;    (('a 'd)
 ;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(1) SOME_ALIST_FOR_THIS_EXAMPLE))
 ;;     (set! SOME_ALIST_FOR_THIS_EXAMPLE (append '(2) SOME_ALIST_FOR_THIS_EXAMPLE)))
@@ -977,125 +991,125 @@
 ;; note that all is essentially useless, one can simply put the expression in all
 ;; outside the macro and it will work the same
 
-(define-syntax parameter/match-all
+(define-syntax parameter-match-all
   (syntax-rules (_)
     [(%) '()]
     [(% (_ clauses ...)) (begin clauses ...)]
-    [(% ((parameters ...)) rest ...) (parameter/match-all rest ...)]
+    [(% ((parameters ...)) rest ...) (parameter-match-all rest ...)]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (cut parameter-inside? <> properties)
                                    (list parameters ...))))
               (begin clauses ...))
-         (parameter/match-all rest ...)))]
+         (parameter-match-all rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (parameter-inside? parameter properties)
               (begin clauses ...))
-         (parameter/match-all rest ...)))]))
+         (parameter-match-all rest ...)))]))
 
-;; (parameter/match-all
+;; (parameter-match-all
 ;;  (('a 'b) (display "YES") (display "YES"))
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
 
-(define-syntax parameter/match-case-all
+(define-syntax parameter-match-case-all
   (syntax-rules ()
     [(%) '()]
     [(% (_ clauses ...)) (begin clauses ...)]
-    [(% ((parameters ...)) rest ...) (parameter/match-case-any rest ...)]
+    [(% ((parameters ...)) rest ...) (parameter-match-case-any rest ...)]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (and (not (member #f (map (cut parameter-inside? <> properties)
                                  (list parameters ...))))
             (begin clauses ...)
-            (parameter/match-case-any rest ...)))]
+            (parameter-match-case-any rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (and (parameter-inside? parameter properties)
             (begin clauses ...)
-            (parameter/match-case-any rest ...)))]))
+            (parameter-match-case-any rest ...)))]))
 
 ;; should short-circuit at YESYES
-;; (parameter/match-case
+;; (parameter-match-case
 ;;  (('a 'b 'e) (display "YES") (display "YES"))
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
 
 
-;; parameter/match:
+;; parameter-match:
 ;; combine all and any into one
-;; (parameter/match
+;; (parameter-match
 ;;  ((any a b) ...)
 ;;  ((all a b c) ...)
 ;;  (all ...))
 
-(define-syntax parameter/match
+(define-syntax parameter-match
   (syntax-rules (_ all)
     [(%) '()]
-    [(% (_ clauses ...) rest ...) (begin (begin clauses ...) (parameter/match rest ...))]
-    [(% (parameters) rest ...) (parameter/match rest ...)]
+    [(% (_ clauses ...) rest ...) (begin (begin clauses ...) (parameter-match rest ...))]
+    [(% (parameters) rest ...) (parameter-match rest ...)]
     [(% ((all parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (cut parameter-inside? <> properties)
                                    (list parameters ...))))
               (begin clauses ...))
-         (parameter/match rest ...)))]
+         (parameter-match rest ...)))]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (cut parameter-inside? <> properties)
                               (list parameters ...)))
               (begin clauses ...))
-         (parameter/match rest ...)))]
+         (parameter-match rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (parameter-inside? parameter properties)
               (begin clauses ...))
-         (parameter/match rest ...)))]))
+         (parameter-match rest ...)))]))
 
-;; (parameter/match
+;; (parameter-match
 ;;  ((all 'a 'b) (display "YES"))
 ;;  (_ (display "YES"))
 ;;  (('c 'e) (display "YES"))
 ;;  ((all 'a 'o) (display "NO"))
 ;;  (_ (display "ALL")))
 
-(define-syntax parameter/match-case
+(define-syntax parameter-match-case
   (syntax-rules (all _)
     [(%) '()]
     [(% (_ clauses ...) rest ...) (begin clauses ...)]
-    [(% (parameters) rest ...) (parameter/match-case rest ...)]
+    [(% (parameters) rest ...) (parameter-match-case rest ...)]
     [(% ((all parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (not (member #f (map (cut parameter-inside? <> properties)
                                 (list parameters ...))))
            (begin clauses ...)
-           (parameter/match-case rest ...)))]
+           (parameter-match-case rest ...)))]
     [(% ((parameters ...) clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (member #t (map (cut parameter-inside? <> properties)
                            (list parameters ...)))
            (begin clauses ...)
-           (parameter/match-case rest ...)))]
+           (parameter-match-case rest ...)))]
     [(% (parameter clauses ...) rest ...)
      (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
        (if (parameter-inside? parameter properties)
            (begin clauses ...)
-           (parameter/match-case rest ...)))]))
+           (parameter-match-case rest ...)))]))
 
-;; (parameter/match-case
+;; (parameter-match-case
 ;;  ((all 'a 'f) (display "NO"))
 ;;  ;; (all (display "YES"))
 ;;  ;; ((any 'c 'e) (display "YES"))
 ;;  ;; ((all 'a 'b) (display "YES"))
 ;;  (all (display "ALL")))
 
-(define-syntax parameter/modifier-if
+(define-syntax parameter-modifier-if
   (syntax-rules (_ all delete prepend append replace)
     [(% _ exp exp2)
      exp]
@@ -1120,45 +1134,45 @@
            exp
            exp2))]))
 
-(define-syntax parameter/modify-inputs
+(define-syntax parameter-modify-inputs
   (syntax-rules (_ all delete prepend append replace)
     [(% inputs (parameter) clauses ...)
-     (parameter/modify-inputs inputs clauses ...)]
+     (parameter-modify-inputs inputs clauses ...)]
     [(% inputs (parameter (delete name) rest ...) clauses ...)
-     (parameter/modify-inputs
-      (parameter/modifier-if
+     (parameter-modify-inputs
+      (parameter-modifier-if
        parameter
        (alist-delete name inputs)
        inputs)
       (parameter rest ...)
       clauses ...)]
     [(% inputs (parameter (delete names ...) rest ...) clauses ...)
-     (parameter/modify-inputs
-      (parameter/modifier-if
+     (parameter-modify-inputs
+      (parameter-modifier-if
        parameter
        (fold alist-delete inputs (list names ...))
        inputs)
       (parameter rest ...)
       clauses ...)]
     [(% inputs (parameter (prepend lst ...) rest ...) clauses ...)
-     (parameter/modify-inputs
-      (parameter/modifier-if
+     (parameter-modify-inputs
+      (parameter-modifier-if
        parameter
        (append (map add-input-label (list lst ...)) inputs)
        inputs)
       (parameter rest ...)
       clauses ...)]
     [(% inputs (parameter (append lst ...) rest ...) clauses ...)
-     (parameter/modify-inputs
-      (parameter/modifier-if
+     (parameter-modify-inputs
+      (parameter-modifier-if
        parameter
        (append inputs (map add-input-label (list lst ...)))
        inputs)
       (parameter rest ...)
       clauses ...)]
     [(% inputs (parameter (replace name replacement) rest ...) clauses ...)
-     (parameter/modify-inputs
-      (parameter/modifier-if
+     (parameter-modify-inputs
+      (parameter-modifier-if
        parameter
        (replace-input name replacement inputs)
        inputs)
@@ -1172,28 +1186,28 @@
 ;;   (name "ok")
 ;;   (accepted-values '(not-ok ok))))
 
-(define-syntax parameter/type
-  (syntax-rules (_)
-    [(% _ rest ...)
-     (parameter/type (string-append (or (package-parameter-name this-package-parameter)
-                                        "%blank")
-                                    "-type")
-                     rest ...)]
-    [(% t-name t-accepted-values)
-     (parameter-type
-      (name t-name)
-      (accepted-values t-accepted-values))]
-    [(% t-name t-accepted-values t-negation)
-     (parameter-type
-      (name t-name)
-      (accepted-values t-accepted-values)
-      (negation t-negation))]
-    [(% t-name t-accepted-values t-negation t-description)
-     (parameter-type
-      (name t-name)
-      (accepted-values t-accepted-values)
-      (negation t-negation)
-      (description t-description))]))
+;; (define-syntax parameter/type
+;;   (syntax-rules (_)
+;;     [(% _ rest ...)
+;;      (parameter/type (string-append (or (package-parameter-name this-package-parameter)
+;;                                         "%blank")
+;;                                     "-type")
+;;                      rest ...)]
+;;     [(% t-name t-accepted-values)
+;;      (parameter-type
+;;       (name t-name)
+;;       (accepted-values t-accepted-values))]
+;;     [(% t-name t-accepted-values t-negation)
+;;      (parameter-type
+;;       (name t-name)
+;;       (accepted-values t-accepted-values)
+;;       (negation t-negation))]
+;;     [(% t-name t-accepted-values t-negation t-description)
+;;      (parameter-type
+;;       (name t-name)
+;;       (accepted-values t-accepted-values)
+;;       (negation t-negation)
+;;       (description t-description))]))
 
 ;; (parameter-type-negation (parameter/type _ '(1 2 3)))
 ;;
