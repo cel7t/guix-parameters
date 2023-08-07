@@ -597,6 +597,95 @@
                                 (package-parameter-spec the-package)))))))
         the-package))]))
 
+(define (variant/build-system))
+
+(define-syntax package-with-parameters
+  (syntax-rules ()
+    [(% spec body ...)
+     (let [(the-package-0 (package body ...))
+           (the-package (properties
+                         (inherit the-package-0)
+                         (cons (cons 'parameter-spec
+                                     spec)
+                               (package-properties the-package-0))))]
+       (define (smoothen)
+         (match-lambda
+           [(a . #:off)
+            (cons a
+                  (parameter-type-negation (package-parameter-type (parameter-spec-get-parameter spec a))))]
+           [(a . #:default)
+            (cons a
+                  (parameter-type-default (package-parameter-type (parameter-spec-get-parameter spec a))))]
+           [cell cell]))
+
+       (define* (sub-kw in #:optional (ret '()))
+         (display ret) (newline)
+         (if (null? in)
+             (reverse ret)
+             (sub-kw
+              (cdr in)
+              (cons
+               (match (car in)
+                 [#:package-name
+                  (package-name the-package)]
+                 [#:parameter-value
+                  ;; XXX: implement with `parameterize`
+                  'value]
+                 [x x])
+               ret))))
+       
+       ;; General Idea:
+       ;; We Extract the Parametric-Variant List
+       ;; Then we apply each operation in order
+       ;; big recursive match statement
+       ;; first get the variant list
+       (let* [(the-variants
+               (append-everything
+                         (parameter-spec-use-variants
+                          (package-parameter-spec the-package))
+                         ;; XXX: universal parameters
+                         (some-function-that-gets-universal-variants)))
+              (the-parameter-list
+               (parameter-spec-parameter-alist
+                                (package-parameter-spec the-package)))
+         ;; applicable variants -> parameter cell matches the-variants
+         ;; we must use a modified m+eqv? here (resolves #:off, #:default)
+              (applicable-variants
+               (filter
+                (lambda (x) (member (smoothen (car x)) ; (psym . val)
+                               the-parameter-list))
+                the-variants))]
+         ;; this fn will be applied to applicable variants
+         (define (apply-variants pkg vars)
+           (if (null? vars)
+               pkg
+           (match (caar vars)
+             ('build-system
+               ;; halt execution if it does not match
+              (if
+               (member (package-build-system the-package)
+                       (cdar vars))
+               (apply-variants pkg (cdr vars))
+               pkg))
+             ('transform
+              (apply-variants
+               (options->transformation
+                (sub-kw (cdar vars))
+                pkg)
+               (cdr vars)))
+             ('modify-inputs
+              (apply-variants
+               (modify-inputs
+                (sub-kw (cdar vars))
+               pkg)
+               (cdr vars)))
+             ('lambda
+                (apply-variants
+               ((sub-kw (cdar vars))
+               pkg)
+               (cdr vars))))))
+       )]))]))
+
 (define (package-parameter-spec package)
   (or (assq-ref (package-properties package) 'parameter-spec)
       '()))
@@ -1046,7 +1135,6 @@
 ;;  (('a 'b 'e) (display "YES") (display "YES"))
 ;;  (('c 'd) (display "NO"))
 ;;  (all (display "ALL")))
-
 
 ;; parameter-match:
 ;; combine all and any into one
