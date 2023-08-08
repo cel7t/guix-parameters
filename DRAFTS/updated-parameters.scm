@@ -597,7 +597,66 @@
                                 (package-parameter-spec the-package)))))))
         the-package))]))
 
-(define (variant/build-system))
+;; Function for package-with-parameters
+;; reason why it's outside its defn:
+;;   too huge, macroexpansion will become unhelpful in case of a bug
+
+;; this fn will be applied to applicable variants
+  ;; varlst -> [(<psym cons> . options) (<psym cons> . options) ...]
+    ;; inner function
+    ;; PKG: package record
+    ;; VARS: [(psym val) (OPTION . (option args) ...) (OPTION-2 ...) ...]
+(define (apply-variants pkg vars)
+  ;; sub keywords
+  (define* (sub-kw in #:optional (ret '()))
+    (display ret) (newline)
+    (if (null? in)
+        (reverse ret)
+        (sub-kw
+         (cdr in)
+         (cons
+          (match (car in)
+            [#:package-name
+             (package-name pkg)]
+            [#:package
+             pkg]
+            [#:parameter-value
+             (cdar vars)]
+            [x x])
+          ret))))
+
+  (cond [(null? (cdr vars)) pkg] ; ((psym val))
+        [(null? (cdadr vars)) ; ((psym val) (option))
+         (apply-variants pkg (cons (car vars) (cddr vars)))]
+        [#t
+         (match (caadr vars) ; ((psym . val) . (<option> optargs) ...)
+           ('build-system
+            ;; halt execution if it does not match
+            (if
+             (member (package-build-system the-package)
+                     (cdadr vars)) ; will be a list of build systems
+             (apply-variants pkg (cons (car vars)
+                                       (cddr vars)))
+             pkg))
+           ('transform
+            (apply-variants
+             (options->transformation
+              ;; multiple
+              (map sub-kw (return-list (cdadr vars)))
+              pkg)
+             (cons (car vars)
+                   (cddr vars))))
+           ;; modify-inputs is not a priority.
+           ;; modify-inputs is a macro, and cannot be passed arguments
+           ;; for now parameter-modify-inputs should be enough
+           ('lambda
+               (apply-variants
+                ;; eval should normally be avoided
+                ;; but `lambda` as is defined evaluates
+                ;; code after substituting in keywords
+                (eval (sub-kw (cdadr vars)))
+                (cons (car vars)
+                      (cddr vars)))))]))
 
 (define-syntax package-with-parameters
   (syntax-rules ()
@@ -618,22 +677,6 @@
                   (parameter-type-default (package-parameter-type (parameter-spec-get-parameter spec a))))]
            [cell cell]))
 
-       (define* (sub-kw in #:optional (ret '()))
-         (display ret) (newline)
-         (if (null? in)
-             (reverse ret)
-             (sub-kw
-              (cdr in)
-              (cons
-               (match (car in)
-                 [#:package-name
-                  (package-name the-package)]
-                 [#:parameter-value
-                  ;; XXX: implement with `parameterize`
-                  'value]
-                 [x x])
-               ret))))
-       
        ;; General Idea:
        ;; We Extract the Parametric-Variant List
        ;; Then we apply each operation in order
@@ -641,50 +684,27 @@
        ;; first get the variant list
        (let* [(the-variants
                (append-everything
-                         (parameter-spec-use-variants
-                          (package-parameter-spec the-package))
-                         ;; XXX: universal parameters
-                         (some-function-that-gets-universal-variants)))
+                (parameter-spec-use-variants
+                 (package-parameter-spec the-package))
+                ;; XXX: universal parameters
+                (some-function-that-gets-universal-variants)))
               (the-parameter-list
                (parameter-spec-parameter-alist
-                                (package-parameter-spec the-package)))
-         ;; applicable variants -> parameter cell matches the-variants
-         ;; we must use a modified m+eqv? here (resolves #:off, #:default)
+                (package-parameter-spec the-package)))
+              
+              ;; applicable variants -> parameter cell matches the-variants
+              ;; we must use a modified m+eqv? here (resolves #:off, #:default)
               (applicable-variants
-               (filter
-                (lambda (x) (member (smoothen (car x)) ; (psym . val)
-                               the-parameter-list))
-                the-variants))]
-         ;; this fn will be applied to applicable variants
-         (define (apply-variants pkg vars)
-           (if (null? vars)
-               pkg
-           (match (caar vars)
-             ('build-system
-               ;; halt execution if it does not match
-              (if
-               (member (package-build-system the-package)
-                       (cdar vars))
-               (apply-variants pkg (cdr vars))
-               pkg))
-             ('transform
-              (apply-variants
-               (options->transformation
-                (sub-kw (cdar vars))
-                pkg)
-               (cdr vars)))
-             ('modify-inputs
-              (apply-variants
-               (modify-inputs
-                (sub-kw (cdar vars))
-               pkg)
-               (cdr vars)))
-             ('lambda
-                (apply-variants
-               ((sub-kw (cdar vars))
-               pkg)
-               (cdr vars))))))
-       )]))]))
+               (map (lambda (x) (cons (smoothen (car x))
+                                 (cdr x)))
+                    (filter
+                     (lambda (x) (member (smoothen (car x)) ; (psym . val)
+                                    the-parameter-list))
+                     the-variants)))]
+         (fold (lambda (vlst pack)
+                 (apply-variants pack vlst))
+               the-package
+               applicable-variants)))])
 
 (define (package-parameter-spec package)
   (or (assq-ref (package-properties package) 'parameter-spec)
