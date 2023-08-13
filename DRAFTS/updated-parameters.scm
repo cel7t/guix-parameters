@@ -579,23 +579,23 @@
            (parameter-spec body ...))]))
 
 ;; XXX: Redo with new update in mind
-(define-syntax package-with-parameters
-  (syntax-rules ()
-    [(package-with-parameters body ...)
-     (let ((the-package (package body ...)))
-       ((options->transformation
-         (apply append
-                (let ((the-build-system (package-build-system the-package)))
-                  (map (lambda (x)
-                         (transform-for-build-system
-                          (assq-ref (parameter-spec/use-transforms
-                                     (package-parameter-spec the-package))
-                                    (car x))
-                          the-build-system))
-                       (filter (lambda (x) (eqv? #t (cdr x)))
-                               (parameter-spec/parameter-alist
-                                (package-parameter-spec the-package)))))))
-        the-package))]))
+;; (define-syntax package-with-parameters
+;;   (syntax-rules ()
+;;     [(package-with-parameters body ...)
+;;      (let ((the-package (package body ...)))
+;;        ((options->transformation
+;;          (apply append
+;;                 (let ((the-build-system (package-build-system the-package)))
+;;                   (map (lambda (x)
+;;                          (transform-for-build-system
+;;                           (assq-ref (parameter-spec/use-transforms
+;;                                      (package-parameter-spec the-package))
+;;                                     (car x))
+;;                           the-build-system))
+;;                        (filter (lambda (x) (eqv? #t (cdr x)))
+;;                                (parameter-spec/parameter-alist
+;;                                 (package-parameter-spec the-package)))))))
+;;         the-package))]))
 
 ;; Function for package-with-parameters
 ;; reason why it's outside its defn:
@@ -661,20 +661,23 @@
 (define-syntax package-with-parameters
   (syntax-rules ()
     [(% spec body ...)
-     (let [(the-package-0 (package body ...))
-           (the-package (properties
+     (let* [(the-package-0 (package body ...))
+           (the-package (package
                          (inherit the-package-0)
-                         (cons (cons 'parameter-spec
+                         (properties
+                           (cons (cons 'parameter-spec
                                      spec)
-                               (package-properties the-package-0))))]
+                               (package-properties the-package-0)))))]
        (define (smoothen)
          (match-lambda
            [(a . #:off)
             (cons a
-                  (parameter-type-negation (package-parameter-type (parameter-spec-get-parameter spec a))))]
+                  (parameter-type-negation
+                   (package-parameter-type (parameter-spec-get-parameter spec a))))]
            [(a . #:default)
             (cons a
-                  (parameter-type-default (package-parameter-type (parameter-spec-get-parameter spec a))))]
+                  (parameter-type-default
+                   (package-parameter-type (parameter-spec-get-parameter spec a))))]
            [cell cell]))
 
        ;; General Idea:
@@ -685,13 +688,13 @@
        (let* [(the-variants
                (append-everything
                 (parameter-spec-use-variants
-                 (package-parameter-spec the-package))
-                ;; XXX: universal parameters
-                (some-function-that-gets-universal-variants)))
+                 (package-parameter-spec the-package))))
+              ;; XXX: universal parameters
+              ;; 8/12: handled by spec
               (the-parameter-list
                (parameter-spec-parameter-alist
                 (package-parameter-spec the-package)))
-              
+
               ;; applicable variants -> parameter cell matches the-variants
               ;; we must use a modified m+eqv? here (resolves #:off, #:default)
               (applicable-variants
@@ -704,7 +707,7 @@
          (fold (lambda (vlst pack)
                  (apply-variants pack vlst))
                the-package
-               applicable-variants)))])
+               applicable-variants)))]))
 
 (define (package-parameter-spec package)
   (or (assq-ref (package-properties package) 'parameter-spec)
@@ -834,9 +837,12 @@
          (parameter-spec-optional pspec)))))
 
 ;; Now we compare it against the PLIST
-(define (parameter-spec-override-plist pspec plist)
+;; NOTE: This is the only instance where GLOBAL PARAMETERS may be used
+;;       Since referring to the package is not possible, we pass it instead of pspec
+(define (parameter-spec-override-plist pkg plist)
   ;; (display "OVERRIDE")(newline)
-  (let* ((all-p (all-spec-parameters pspec))
+  (let* ((pspec (package-parameter-spec pkg))
+         (all-p (all-spec-parameters pspec))
          (filtered-plist (filter (lambda (x) (or (member (car x) all-p)
                                             (and (hash-ref %global-parameters (car x))
                                                  ((package-parameter-predicate
@@ -844,7 +850,7 @@
                                                   ;; NOTE:
                                                   ;; <this-package> might not work
                                                   ;; might have to capture it in pspec
-                                                  this-package))))
+                                                  pkg))))
                                  (parameter-process-list plist)))
          (filtered-car (map car filtered-plist))
          (remaining-p (filter (lambda (x) (not (member x filtered-car)))
@@ -951,6 +957,17 @@
                         (eqv? (car ls) '_))))
            (throw+f 'one-of-unsatisfied ls)))
        (parameter-spec-one-of pspec))
+      ;; depcheck
+      ;; map over plst
+      ;; psym->deps : if dep m+eqv? (find (car dep) plst) #t
+      ;; if any #f signal err
+      ;; (map ; deps
+      ;;  (lambda (prm)
+      ;;    (unless
+      ;;        (not
+      ;;         (member #f
+      ;;                 ()
+
       ;; XXX: Needs a per-parameter rewrite
       ;; (map ; dependencies
       ;;  (lambda (x)
@@ -972,11 +989,13 @@
  ;;   (display "DOES IT WORK? ") (display works?) (newline)
     works?))
 
-(define (spec-resolve-list pspec plst)
-  (let ([proper-plst (override-spec-multi-match
+;; need pkg instead of pspec for override-spec
+(define (spec-resolve-list pkg plst)
+  (let* ([pspec (package-parameter-spec pkg)]
+         [proper-plst (override-spec-multi-match
                       pspec
                       (parameter-spec-override-plist
-                       pspec
+                       pkg
                        (parameter-process-list plst)))])
    ;; (display "TRIALS OVER?")(newline)
     (if (parameter-spec-validate pspec proper-plst)
