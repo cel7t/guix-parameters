@@ -610,9 +610,10 @@
 (define (apply-variants pkg vars)
   ;; sub keywords
   (define* (sub-kw in #:optional (ret '()))
-    (display ret) (newline)
     (if (null? in)
-        (reverse ret)
+        (match (reverse ret)
+               [(a . rest)
+                (cons a (string-join rest "="))])
         (sub-kw
          (cdr in)
          (cons
@@ -626,9 +627,10 @@
             [x x])
           ret))))
 
-  (cond [(null? (cdr vars)) pkg] ; ((psym val))
+  (cond [(null? (cdr vars))
+         pkg] ; ((psym val))
         [(null? (cdadr vars)) ; ((psym val) (option))
-         (apply-variants pkg (cons (car vars) (cddr vars)))]
+              (apply-variants pkg (cons (car vars) (cddr vars)))]
         [#t
          (match (caadr vars) ; ((psym . val) . (<option> optargs) ...)
            ('build-system
@@ -640,10 +642,11 @@
                                        (cddr vars)))
              pkg))
            ('transform
+            [display "TRANSFORMATION!!!"][newline]
             (apply-variants
-             (options->transformation
+             ((options->transformation
               ;; multiple
-              (map sub-kw (return-list (cdadr vars)))
+              (map sub-kw (return-list (cdadr vars))))
               pkg)
              (cons (car vars)
                    (cddr vars))))
@@ -699,10 +702,14 @@
               ;; applicable variants -> parameter cell matches the-variants
               ;; we must use a modified m+eqv? here (resolves #:off, #:default)
               (applicable-variants
-               (map (lambda (x) (cons (smoothen (car x))
-                                 (cdr x)))
+               (map (lambda (x)
+                      (cons (smoothen (cons (car x)
+                                               (caadr x)))
+                                 (cdadr x)))
                     (filter
-                     (lambda (x) (member (smoothen (car x)) ; (psym . val)
+                     (lambda (x)
+                       (member (smoothen (cons (car x)
+                                               (caadr x))) ; (psym . val)
                                     the-parameter-list))
                      the-variants)))]
          (fold (lambda (vlst pack)
