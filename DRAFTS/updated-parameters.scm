@@ -545,7 +545,8 @@
   ;;                 (thunked))
   (use-variants parameter-spec-use-variants ;; only use variants for these
                   (default '())
-                  (sanitize (variant-sanitizer parameter-spec-local))
+                  (sanitize (variant-sanitizer
+                              (parameter-spec-local this-parameter-spec)))
                   (thunked))
   (parameter-alist parameter-spec-parameter-alist ;; this is ultimately what will be transformed by --with-parameters
                    ;; '((a . #t) (b . #f) ...)
@@ -668,7 +669,7 @@
                            (cons (cons 'parameter-spec
                                      spec)
                                (package-properties the-package-0)))))]
-       (define (smoothen)
+       (define smoothen
          (match-lambda
            [(a . #:off)
             (cons a
@@ -718,13 +719,14 @@
 ;; Convention:
 ;;   Works on Parameters? -> parameter-spec/fun
 ;;   Works on Parameter-Spec? -> parameter-spec/fun
-(define (parameter-spec-get-parameter pspec psym)
+(define (parameter-spec-get-parameter pspec pcons)
+  (let ((psym (car pcons)))
   (or (find (lambda (x)
                (eqv? psym
                      (package-parameter-name x)))
              (parameter-spec-local pspec))
       (hash-ref %global-parameters psym)
-      (throw "Parameter not found: " psym)))
+      (throw "Parameter not found: " psym))))
 
 (define (parameter-spec-negation-supported? pspec x)
   (let ((negv
@@ -743,7 +745,7 @@
 ;;              (assq-ref (parameter-spec-dependencies pspec) x)
 ;;              'parameters)))
 ;;     lst)))
-(define (get-spec-deps psym)
+(define (get-spec-deps pspec psym)
   (let ([p (parameter-spec-get-parameter pspec psym)])
     (return-list
      (assq-ref (package-parameter-dependencies p)
