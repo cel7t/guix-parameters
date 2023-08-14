@@ -642,7 +642,6 @@
                                        (cddr vars)))
              pkg))
            ('transform
-            [display "TRANSFORMATION!!!"][newline]
             (apply-variants
              ((options->transformation
               ;; multiple
