@@ -386,6 +386,11 @@ strings like \"guile-next=stable-3.0\" meaning that packages are built using
       (if (package? obj)
           (rewrite obj)
           obj))))
+;; spec parsing will be the same as ludo's patch but for applying the patches, we'll need the circuitry of package-with-parameters
+;; idea:
+;; make a function based on package-with-parameters, and write both the transform and package-with-parameters to use it
+;; use resolver on the speclist and only act if applicable values have changed
+
 ;; }
 
 (define (package-dependents/spec top bottom)

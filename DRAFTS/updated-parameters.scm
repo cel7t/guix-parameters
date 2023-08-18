@@ -78,7 +78,7 @@
 (define (give-me-a-symbol ex)
   (cond ((symbol? ex) ex)
         ((string? ex) (string->symbol ex))
-        (else (throw 'bad! ex))))
+        (else (throw 'bad-give-me-a-sym ex))))
 
 (define-record-type* <parameter-type> parameter-type
   make-parameter-type
@@ -117,6 +117,7 @@
                 (sanitize sanitize-parametric-variants))
   (dependencies package-parameter-dependencies ; 7/14
                 (default '())
+                (sanitize dependency-sanitizer)
                 (thunked))
   (predicate    package-parameter-predicate
                 (default #f))
@@ -145,7 +146,7 @@
 (define (sanitize-parametric-variants ls)
   ;; ((a . t1 t2 ...) ((b c) t3 t4 ...))
   (cond ((list? ls) ls)
-        (else (throw 'bad! ls))))
+        (else (throw 'bad-variants ls))))
 
 ;; (define-syntax lots-of-cons->alist
 ;;   (syntax-rules ()
@@ -279,7 +280,7 @@
              (cons (cons (keyword->symbol (car lst))
                          (car next-lst))
                    (break-keywords (cdr next-lst)))))
-          (else (throw 'bad! lst))))
+          (else (throw 'bad-break-kw lst))))
   (merge-same-car (break-keywords kw-lst)))
 
 ;; (define-syntax build-system/transform-match
@@ -326,9 +327,9 @@
              (cond ((package-parameter? val) val)
                    ((symbol? val) (package-parameter (name val)))
                    ((string? val) (package-parameter (name (string->symbol val))))
-                   (else (throw 'bad! val))))
+                   (else (throw 'bad-local-val val))))
            ls)
-      (throw 'bad! ls)))
+      (throw 'bad-local-list ls)))
 
 ;; (use-modules (ice-9 match))
 ;; (define (morphism-sanitizer lv) ; ((a^ m) ((b sym) m2) c ((d sym1 sym2 ...) m3) ...)
@@ -380,16 +381,30 @@
 ;;         (throw 'bad! x)])
 ;;      ls)))
 
+;; 8/18 USE VARIANTS PROBLEMS
+;;      p -> interpreted as p _
+;;      but users want to use it as a total override in #:no
+
+;; XXX New USE VARIANTS:
+;; #:yes, #:no only accepts parameter names and not values
+;; #:special only accepts variants
+;; if you wish to fine-tune something #:yes/#:no is not the way to go!
+;; just override it in #:special!
+
 (define* (variant-sanitizer lv)
   ;; #:yes -> use default variant
   ;; #:no -> don't use variant
   ;; #:special -> use variant in cdr
   (define (sym->parameter psym)
+    (display "SYM->PARAMETER: ") (display psym) (newline)
     (or (find (lambda (g) (eqv? psym
                            (package-parameter-name g)))
               lv)
         (hash-ref %global-parameters psym)
-        (throw 'bad! psym)))
+        (throw 'bad-parameter psym)))
+  (define-macro (assq-ov! asslst key val)
+    `(set! ,asslst
+       (assq-set! ,asslst ,key ,val)))
   (lambda (ls)
     (let ((triad (parse-kw-list ls)))
       (if (find (lambda (g) (not (or (eqv? (car g) 'yes)
@@ -397,60 +412,111 @@
                                 (eqv? (car g) 'special))))
                 triad)
           (error "invalid keyword in use-variant"))
-      (let ((local-no '())
-            (variant-lst '()))
-        (set! variant-lst
-          (apply append
-                 (map
-                  (match-lambda
-                    [(#:yes rest ...)
-                     (return-list
-                      (map (lambda (y)
-                             (cons y
-                                   (package-parameter-variants
-                                    (sym->parameter y))))
-                           rest))]
-                    [(#:no rest ...)
-                     (and (set! local-no
-                            (append
-                             (return-list
-                              (filter (lambda (g)
-                                        (member (package-parameter-name g)
-                                                rest))
-                                      lv))
-                             local-no))
-                          '())]
-                    [(#:special rest ...)
-                     (return-list
-                      (map
-                       (lambda (x)
-                         (cons (car x)
-                               (sanitize-parameteric-variants (cdr x))))
-                       rest))]
-                    [_ (error "wrongly formatted use-variant!")])
-                  triad)))
-        (append variant-lst
-                (return-list
-                 (map (lambda (z)
-                        (cons (package-parameter-name z)
-                              (package-parameter-variants z)))
-                      (filter (lambda (g)
-                                (not (member g
-                                             local-no)))
-                              lv))))))))
+      (let ((vars-lst '()))
+        (map
+         (match-lambda
+           [('yes rest ...)
+            (map
+             (lambda (p)
+               (if (not (symbol? p))
+                   (throw 'bad-symbol! p)
+                   (assq-ov! vars-lst p #:yes)))
+             rest)]
+           [('no rest ...)
+            (map
+             (lambda (p)
+               (if (not (symbol? p))
+                   (throw 'bad-symbol! p)
+                   (assq-ov! vars-lst p #:no)))
+             rest)]
+           [('special rest ...)
+            (map
+             (lambda (x)
+               (assq-ov! vars-lst
+                         (car x)
+                         (cdr x)))
+             rest)]
+           [_ (error "wrongly formatted use-variant!")])
+         triad)
+        (map
+         (lambda (x)
+           (match (assq-ref vars-lst (package-parameter-name x))
+             [#f (assq-ov! vars-lst
+                            (package-parameter-name x)
+                            (package-parameter-variants x))]
+             [#:yes (assq-ov! vars-lst
+                            (package-parameter-name x)
+                            (package-parameter-variants x))]
+             [#:no #f] ; do nothing
+             [varn (assq-ov! vars-lst
+                            (package-parameter-name x)
+                            varn)]))
+         lv)
+        (display "SANITIZED VARLST: ") (display vars-lst) (newline)
+        vars-lst))))
+     ;; (let ((local-no '())
+     ;;       (variant-lst '()))
+     ;;   (set! variant-lst
+     ;;     (apply append
+     ;;            (map
+     ;;             (match-lambda
+     ;;               [(yes rest ...)
+     ;;                (return-list
+     ;;                 (map (lambda (y)
+     ;;                        (cons (get-parameter-sym y) ; FIX the other thing
+     ;;                              (package-parameter-variants
+     ;;                               (sym->parameter
+     ;;                                 (get-parameter-sym y)))))
+     ;;                      rest))]
+     ;;               [(no rest ...)
+     ;;                ;; XXX: set the entry in the variant list to empty..?
+     ;;                ;;      BAD IDEA -> could lead to re-evaluation of existing pkgs
+     ;;                (and (set! local-no
+     ;;                       (append
+     ;;                        (return-list
+     ;;                         (filter (lambda (g)
+     ;;                                   (member (package-parameter-name g)
+     ;;                                           rest))
+     ;;                                 lv))
+     ;;                        local-no))
+     ;;                     '())]
+     ;;               [(special rest ...)
+     ;;                (return-list
+     ;;                 (map
+     ;;                  (lambda (x)
+     ;;                    (cons (car x)
+     ;;                          (sanitize-parameteric-variants (cdr x))))
+     ;;                  rest))]
+     ;;               [_ (error "wrongly formatted use-variant!")])
+     ;;             triad)))
+     ;; (append variant-lst
+     ;;         (return-list
+     ;;          (map (lambda (z)
+     ;;                 (cons (package-parameter-name z)
+     ;;                       (package-parameter-variants z)))
+     ;;               (filter (lambda (g)
+     ;;                         (not (member g
+     ;;                                      local-no)))
+     ;;                       lv))))))))
 
 ;; parameter-dependency
 ;; now a sanitizer
 ;; '(#:parameter a b ... #:package c d ...)
 ;; '(a b c) -> parameter
 
-;; XXX: check for keyword validity i.e only #:package and #:parameter
-;;      make list-of-list
 (define (dependency-sanitizer deps)
-  (if (not (list? deps)) (throw 'bad! deps))
-  (if (keyword? (car deps))
-      (parse-kw-list deps)
-      (dependency-sanitizer (cons #:parameter deps))))
+  (and (display "SANITIZING DEPS") (newline))
+  (unless (eqv? deps '())
+    (if (not (list? deps)) (throw 'bad! deps))
+    (if (keyword? (car deps))
+      (if (match (car deps)
+                 [#:package #t]
+                 [#:parameter #t]
+                 [_ #f])
+        (and (display (assq-ref (parse-kw-list deps) 'parameter)) (newline)
+             (parse-kw-list deps))
+        (throw 'bad-keyword! (car deps)))
+      (dependency-sanitizer (cons #:parameter deps)))))
 
 ;; (define-syntax parameter/dependency
 ;;   (lambda (defn)
@@ -521,8 +587,6 @@
             ;; 6/13: removed the sanitizer as merging local and optional
             ;;       should be handled by the parser instead.
             (thunked))
-  ;; XXX: automatically create (x x!) if both are defined
-  ;; 6/12: this will be handled by the parser
   (one-of parameter-spec-one-of
           (default '())
           (thunked))
@@ -579,7 +643,6 @@
      (cons 'parameter-spec
            (parameter-spec body ...))]))
 
-;; XXX: Redo with new update in mind
 ;; (define-syntax package-with-parameters
 ;;   (syntax-rules ()
 ;;     [(package-with-parameters body ...)
@@ -609,11 +672,26 @@
     ;; VARS: [(psym val) (OPTION . (option args) ...) (OPTION-2 ...) ...]
 (define (apply-variants pkg vars)
   ;; sub keywords
-  (define* (sub-kw in #:optional (ret '()))
+  (define* (sub-kw-t in #:optional (ret '()))
     (if (null? in)
         (match (reverse ret)
                [(a . rest)
                 (cons a (string-join rest "="))])
+        (sub-kw-t
+         (cdr in)
+         (cons
+          (match (car in)
+            [#:package-name
+             (package-name pkg)]
+            [#:package
+             pkg]
+            [#:parameter-value
+             (cdar vars)]
+            [x x])
+          ret))))
+  (define* (sub-kw in #:optional (ret '()))
+    (if (null? in)
+        (reverse ret)
         (sub-kw
          (cdr in)
          (cons
@@ -628,10 +706,13 @@
           ret))))
 
   (cond [(null? (cdr vars))
-         pkg] ; ((psym val))
+         (and (display "NULL CDR: ") (display vars) (newline)
+              pkg)] ; ((psym val))
         [(null? (cdadr vars)) ; ((psym val) (option))
-              (apply-variants pkg (cons (car vars) (cddr vars)))]
+         (and (display "NULL CDADR: ") (display vars) (newline)
+              (apply-variants pkg (cons (car vars) (cddr vars))))]
         [#t
+         (and (display "VARS: ") (display vars) (newline)
          (match (caadr vars) ; ((psym . val) . (<option> optargs) ...)
            ('build-system
             ;; halt execution if it does not match
@@ -645,7 +726,7 @@
             (apply-variants
              ((options->transformation
               ;; multiple
-              (map sub-kw (return-list (cdadr vars))))
+              (map sub-kw-t (return-list (cdadr vars))))
               pkg)
              (cons (car vars)
                    (cddr vars))))
@@ -657,9 +738,12 @@
                 ;; eval should normally be avoided
                 ;; but `lambda` as is defined evaluates
                 ;; code after substituting in keywords
-                (eval (sub-kw (cdadr vars)))
+                (primitive-eval (and (display "CADADR: ")
+                                     (display (cadadr vars))
+                                     (newline)
+                                     (sub-kw (cadadr vars))))
                 (cons (car vars)
-                      (cddr vars)))))]))
+                      (cddr vars))))))]))
 
 (define-syntax package-with-parameters
   (syntax-rules ()
@@ -670,7 +754,10 @@
                          (properties
                            (cons (cons 'parameter-spec
                                      spec)
-                               (package-properties the-package-0)))))]
+                                 (package-properties the-package-0)))))]
+       (define-macro (assq-ov! asslst key val)
+         `(set! ,asslst
+            (assq-set! ,asslst ,key ,val)))
        (define smoothen
          (match-lambda
            [(a . #:off)
@@ -683,34 +770,142 @@
                    (package-parameter-type (parameter-spec-get-parameter spec a))))]
            [cell cell]))
 
+       ;; (define (p-eqv? psym absv relv) 
+       ;;   (if 
+          
        ;; General Idea:
        ;; We Extract the Parametric-Variant List
        ;; Then we apply each operation in order
        ;; big recursive match statement
        ;; first get the variant list
-       (let* [(the-variants
-               (append-everything
-                (parameter-spec-use-variants
-                 (package-parameter-spec the-package))))
-              ;; XXX: universal parameters
-              ;; 8/12: handled by spec
+       (let* [(the-spec  ; this value gets called very often
+                (package-parameter-spec the-package))
               (the-parameter-list
                (parameter-spec-parameter-alist
-                (package-parameter-spec the-package)))
+                the-spec))
+              (the-variants
+               ;; XXX rewrite: first get list of normal variants (local, etc)
+               ;; then match over use-variants
+               ;; if cdr #:yes, check the-parameter-list for val
+               ;; if cdr #:no, purge from prev list
+               ;; if cdr #:special, /replace/ value
+               (let ((var-lst (parameter-spec-use-variants the-spec)))
+                 (map (lambda (x)
+                        (display "OVERRIDING ") (display var-lst)
+                        (display " WITH ") (display (car x)) (newline)
+                        (set! var-lst
+                          (assq-set! var-lst
+                                   (car x)
+                                   (package-parameter-variants
+                                    (parameter-spec-get-parameter the-spec (car x))))))
+                      (filter (lambda (x)
+                                (display "CHECKING PARAMETER: ") (display x) (newline)
+                                (match (package-parameter-predicate
+                                        (parameter-spec-get-parameter
+                                         the-spec
+                                         (car x)))
+                                  [#f #f]
+                                  [#t #t]
+                                  [fn (fn the-package)]))
+                              (filter
+                               (lambda (x)
+                                 (not (assq-ref var-lst (car x)))) ; not in the variant-lst?
+                               the-parameter-list)))
+                 (display "DONE OVERRIDING!") (newline)
+                 (map
+                  (lambda (x)
+                    (match (cdr x)
+                      [#:yes (assq-ov! var-lst
+                                        (car x)
+                                        (package-parameter-variants
+                                         (parameter-spec-get-parameter the-spec (car x))))]
+                      [#:no (set! var-lst
+                              (assq-remove! var-lst
+                                          (car x)))]
+                      [_ #f]))
+                  var-lst)
 
+                 var-lst))
+                ;; (append-everything
+                ;;   ;; add GLOBAL variants from the-parameter-list
+                ;;   (map (lambda (x)
+                ;;          (let ((z (parameter-spec-get-parameter
+                ;;                    the-spec (get-parameter-sym x))))
+                ;;          (cons (package-parameter-name z)
+                ;;               (package-parameter-variants z))))
+                ;;   (filter (lambda (x)
+                ;;             (display "CHECKING PARAMETER: ") (display x) (newline)
+                ;;             (match (package-parameter-predicate
+                ;;                      (parameter-spec-get-parameter
+                ;;                        the-spec
+                ;;                        x))
+                ;;                    [#f #f]
+                ;;                    [#t #t]
+                ;;                    [fn (fn the-package)]))
+                ;;           ;; XXX: merge with use-variants list
+                ;;           ;;      give use-variants precedence
+                ;;           ;;      check if #:no
+                ;;           ;; exceptions: #:BLOCK-ALL, #:EVERYTHING
+                ;;           (let ((local-plist
+                ;;                   (map (cut package-parameter-name <>)
+                ;;                        (parameter-spec-local the-spec))))
+                ;;             (filter (lambda (x)
+                ;;                       (not (member (car x) local-plist)))
+                ;;           the-parameter-list))))
+                ;;   (parameter-spec-use-variants
+                ;;     the-spec)))
+              (use-variant-printing (and (display "USE VARIANTS: ")
+                                     (display (parameter-spec-use-variants the-spec)) (newline)))
               ;; applicable variants -> parameter cell matches the-variants
               ;; we must use a modified m+eqv? here (resolves #:off, #:default)
+              (variant-printing (and (display "ALL VARIANTS: ")
+                                     (display the-variants) (newline)))
               (applicable-variants
-               (map (lambda (x)
-                      (cons (smoothen (cons (car x)
-                                               (caadr x)))
-                                 (cdadr x)))
-                    (filter
+               (map (lambda (y)
+                      (cons (cons (car y)
+                                  (assq-ref the-parameter-list (car y)))
+                            (apply append
+                             (map (lambda (x)
+                                    (return-list (cdr x)))
+                                  (cdr y)))))
+                    ;; does it have values?
+                    (filter (lambda (x) (not (null? (cdr x))))
+                    (filter ;; get list of applicable values
                      (lambda (x)
-                       (member (smoothen (cons (car x)
-                                               (caadr x))) ; (psym . val)
-                                    the-parameter-list))
-                     the-variants)))]
+                       (display "TESTING FOR APPLICABILITY: ")
+                       (display x) (newline)
+                       ;;; XXX: check for cases like _, #:off etc
+                       ;; filter over values within psym's list
+                       (let* ((absv (assq-ref the-parameter-list (car x)))
+                         ;; if absv is -ve, only -ve values allowed
+                         ;; if absv is +ve, only +ve and _ allowed
+                             (negv (parameter-type-negation
+                                    (package-parameter-type
+                                    (parameter-spec-get-parameter the-spec (car x)))))
+                             (defv? (eqv? absv
+                                    (parameter-type-default
+                                    (package-parameter-type
+                                    (parameter-spec-get-parameter the-spec (car x)))))))
+                         (if (eqv? absv negv) ; -ve?
+                             (filter
+                              (lambda (ls)
+                                (match (car ls)
+                                  [#:off #t]
+                                  [negv #t]
+                                  [_ #f]))
+                              (cdr x))
+                             (filter
+                              (lambda (ls)
+                                (match (car ls)
+                                  ['_ #t]
+                                  [absv #t]
+                                  [#:default defv?]
+                                  [_ #f]))
+                              (cdr x)))))
+                     (filter (lambda (x) assq-ref the-parameter-list (car x))
+                       the-variants)))))]
+         (display "APPLICABLE VARIANTS: ")
+         (display applicable-variants) (newline)
          (fold (lambda (vlst pack)
                  (apply-variants pack vlst))
                the-package
@@ -726,7 +921,7 @@
 ;;   Works on Parameters? -> parameter-spec/fun
 ;;   Works on Parameter-Spec? -> parameter-spec/fun
 (define (parameter-spec-get-parameter pspec pcons)
-  (let ((psym (car pcons)))
+  (let ((psym (get-parameter-sym pcons)))
   (or (find (lambda (x)
                (eqv? psym
                      (package-parameter-name x)))
@@ -768,10 +963,14 @@
          (v2 (parameter-process-list
               (append-everything
                (apply append
+                      ;; XXX: change to a filter-map
+                      (filter (cut car <>)
                       (map (cut get-spec-deps pspec <>)
-                           (return-list v1)))
+                           (return-list v1))))
                v1))))
          ;; funnel will signal duplication err
+         (display "V1: ") (display v1) (newline)
+         (display "V2: ") (display v2) (newline)
     v2))
 
 ;; 2. Processing
@@ -802,6 +1001,8 @@
   (define (funnel plst) ; step 5
     ;; first we will get a list indexed by keys
     (define (group-val carry lst)
+      (display "GROUPING: ") (display lst) (display " AND ") (display carry)
+      (newline)
       (if (null-list? lst)
           carry
           (let ((v (assq-ref carry (caar lst))))
@@ -813,11 +1014,13 @@
                             (cons (cdar lst) '())))
              (cdr lst)))))
     (define (figure-out p)
+      (display "FIGURING OUT: ") (display p) (newline)
       (or (and (< (length p) 3)
                (or (and (eq? (length p) 1) (car p))
                    (and (member '_ p)
                         (car (delq '_ p)))))
           (throw 'too-many-elements! p)))
+    (display "FUNNELING: ") (display (group-val '() plst)) (newline)
     (map (lambda (x) (cons (car x)
                       (figure-out
                        (delete-duplicates (cdr x)))))
@@ -848,7 +1051,7 @@
 ;; NOTE: This is the only instance where GLOBAL PARAMETERS may be used
 ;;       Since referring to the package is not possible, we pass it instead of pspec
 (define (parameter-spec-override-plist pkg plist)
-  ;; (display "OVERRIDE")(newline)
+  (display "OVERRIDE")(newline)
   (let* ((pspec (package-parameter-spec pkg))
          (all-p (all-spec-parameters pspec))
          (filtered-plist (filter (lambda (x) (or (member (car x) all-p)
@@ -872,7 +1075,7 @@
 ;; 4. Funneling
 
 (define (override-spec-multi-match pspec plst)
-  ;; (display "MULTIMATCH")(newline)
+  (display "MULTIMATCH")(newline)
   (map
     (match-lambda
       [(a . '_) ;; TODO: iterate through these!
@@ -890,12 +1093,12 @@
 ;; 5. Validation
 
 (define (parameter-spec-validate pspec plst)
-  ;; (display "VALIDATING: ") (display plst) (newline)
+  (display "VALIDATING: ") (display plst) (newline)
   (define (process-multi-list lst)
     (apply append
            (map (lambda (x)
-                  ;; (display x) (display ": ")
-                  ;; (display (parameter-process-list (list x))) (newline)
+                  (display x) (display ": ")
+                  (display (parameter-process-list (list x))) (newline)
                   (parameter-process-list (list x)))
                 (filter (lambda (x) ;; (display x) (newline)
                            (not (eqv? x '_)))
@@ -905,8 +1108,8 @@
   (let ((works? #t))
 
     (define (m+eqv? new-val orig-val)
-      ;; (display "VALS: ") (display new-val)
-      ;; (display " ") (display orig-val) (newline)
+      (display "VALS: ") (display new-val)
+      (display " ") (display orig-val) (newline)
       (or (and (eqv? orig-val '_)
                (not (eqv? new-val #:off)))
           (eqv? orig-val new-val)))
@@ -965,17 +1168,47 @@
                         (eqv? (car ls) '_))))
            (throw+f 'one-of-unsatisfied ls)))
        (parameter-spec-one-of pspec))
-      ;; depcheck
-      ;; map over plst
-      ;; psym->deps : if dep m+eqv? (find (car dep) plst) #t
-      ;; if any #f signal err
-      ;; (map ; deps
-      ;;  (lambda (prm)
-      ;;    (unless
-      ;;        (not
-      ;;         (member #f
-      ;;                 ()
 
+      (and (display "STARTING DEPLOOPS") #t)
+      (unless (not (member #f
+                      (return-list
+                       (map (lambda (x)
+                              (let ((deps (package-parameter-dependencies
+                                           (parameter-spec-get-parameter pspec x))))
+                                (display "DEPS: ") (display deps) (newline)
+                                (if deps
+                                    (not
+                                      (member
+                                        #f
+                                        (map
+                                          (lambda (dep)
+                                            ;; 0. restructure d to a proper cell
+                                            (let ([ok (and (display "DEPLOOP: ")
+                                                           (display dep) (newline)
+                                                           2)]
+                                                  (d (car
+                                                       (parameter-process-list
+                                                         (return-list dep)))))
+                                              ;; 1. assq-ref
+                                              (m+eqv?
+                                                (assq-ref plst (car d))
+                                                (cdr d))))
+                                          (return-list
+                                            ;;; XXX: check for packages
+                                            ;; not doable in the current state as the validator
+                                            ;; does not take the entire package as an argument
+                                            ;; the validator will have to be heavily modified
+                                            (assq-ref deps 'parameter)))))
+                                    #t)))
+                            ;; filter to check if parameter is not its negation
+                            (filter (lambda (x)
+                                      (display "CHECKING: ") (display x) (newline)
+                                      (not (eqv? (cdr x)
+                                                 (parameter-spec-negation-supported?
+                                                  pspec
+                                                  (car x)))))
+                                    plst)))))
+                      (throw+f "Bad dependencies!"))
       ;; XXX: Needs a per-parameter rewrite
       ;; (map ; dependencies
       ;;  (lambda (x)
@@ -1014,8 +1247,8 @@
 
 (define-syntax define-global-parameter
   (syntax-rules ()
-    [(define-global-parameter (parameter-definition ...))
-     (let ((gp-val (parameter-definition ...)))
+    [(define-global-parameter parameter-definition)
+     (let ((gp-val parameter-definition))
        (hash-set! %global-parameters
                   (package-parameter-name gp-val)
                   gp-val))]))
