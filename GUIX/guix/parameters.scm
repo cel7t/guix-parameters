@@ -32,33 +32,37 @@
   #:use-module (ice-9 hash-table)
   #:use-module (ice-9 match)
   #:use-module (ice-9 receive)
-  #:export (package-parameter
-            parameter-type
-            parameter-spec
-            boolean-parameter-type
+  ;? -> remove?
+  #:export (parameter-type;
+            package-parameter;
+            parameter-spec;
+            boolean-parameter-type;
 
-            parameter-variant
-            parameter-variant-match
-            parameter-spec-property
-            package-parameter-spec
-            all-spec-parameters
-            base-parameter-alist
-            parameter-spec-override-plist
-            parameter-spec-validate
-            spec-resolve-list
-            %global-parameters
-            define-global-parameter
+            parameter-variant;
+            parameter-variant-match;
+            parameter-spec-property;?
+            package-parameter-spec;
+            all-spec-parameters;
+            base-parameter-alist;
+            parameter-process-list;
+            package-override-plist;?
+            parameter-spec-validate;
+            package-resolve-parameter-list;
+            %global-parameters;
+            define-global-parameter;
 
-            package-with-parameters
-            parameter-spec-parameter-alist
-            parameter-if
-            parameter-if-all
-            parameter-match-any
-            parameter-match-all
-            parameter-match-case-any
-            parameter-match
-            parameter-match-case
-            parameter-modify-inputs))
+            package-with-parameters;
+            apply-variants;
+            parameter-spec-parameter-alist;
+            parameter-if;
+            parameter-if-all;?
+            parameter-match-any;?
+            parameter-match-all;?
+            parameter-match-case-all;?
+            parameter-match;
+            parameter-match-case;
+            parameter-modify-inputs;
+            ))
 
 ;;; Commentary:
 ;;;
@@ -76,6 +80,7 @@
 ;;; Code:
 
 (define (give-me-a-symbol ex)
+  "Take a string or symbol EX and return a symbol."
   (cond ((symbol? ex) ex)
         ((string? ex) (string->symbol ex))
         (else (raise (formatted-message
@@ -131,6 +136,7 @@
 ;; SANITIZERS
 
 (define (sanitize-parametric-variants ls)
+  "Raise an error if LS is not a list."
   (cond ((list? ls) ls)
         (else (raise (formatted-message
                       (G_ "Not a list: ~s")
@@ -139,21 +145,24 @@
 ;; % USEFUL HELPER FUNCTIONS %
 
 (define (return-list lst)
+  "Take a value LST, return LST if it a list and (list LST) otherwise."
   (if (list? lst)
       lst
       (list lst)))
 
 (define (append-everything . things)
+  "Take a number of THINGS, and append them all."
   (apply append
          (map return-list things)))
 
 (define (get-parameter-sym psym)
+  "If the argument is a cons cell, return the CAR otherwise return the argument."
   (match psym
     [(a . b) a]
     [a a]))
 
 (define* (merge-same-car lst #:optional (carry '()))
-  ;; Takes an ALIST and merges entries with the same CAR
+  "Merge the cells of LST with the same value in their CAR."
   (define (assq-append alist key cont)
     (if (equal? (caar alist) key)
         (cons (cons key (append (cdar alist) cont))
@@ -179,6 +188,7 @@
        (return-list 'psym)))]))
 
 (define* (parse-kw-list kw-lst)
+  "Parses a list of keywords, KW-LST and returns an alist."
   (define (list-till-kw lst)
     (receive (a b)
         (break keyword? lst)
@@ -216,6 +226,7 @@
        (parameter-variant-match :lock rest ...))))))
 
 (define (local-sanitizer ls)
+  "Sanitize a list of local parameters, LS."
   (if (list? ls)
       (map (lambda (val)
              (cond ((package-parameter? val) val)
@@ -230,10 +241,12 @@
                       ls))))
 
 (define* (variant-sanitizer lv)
+  "Sanitize a list of variants."
   ;; #:yes -> use default variant
   ;; #:no -> don't use variant
   ;; #:special -> use variant in cdr
   (define (sym->parameter psym)
+    "Take a symbol PSYM and return the corresponding parameter."
     (or (find (lambda (g) (eqv? psym
                            (package-parameter-name g)))
               lv)
@@ -300,6 +313,7 @@
         vars-lst))))
 
 (define (dependency-sanitizer deps)
+  "Sanitize the dependency-list of a package-parameter."
   (unless (eqv? deps '())
     (if (not (list? deps))
         (raise (formatted-message
@@ -361,7 +375,8 @@
     ;; PKG: package record
     ;; VARS: [(psym val) (OPTION . (option args) ...) (OPTION-2 ...) ...]
 (define (apply-variants pkg vars)
-  ;; substitute keywords
+  "Apply a list of variants, VARS to the given package PKG."
+  ;; substitute keywords - transforms
   (define* (sub-kw-t in #:optional (ret '()))
     (if (null? in)
         (match (reverse ret)
@@ -379,6 +394,7 @@
              (cdar vars)]
             [x x])
           ret))))
+  ;; substitute keywords
   (define* (sub-kw in #:optional (ret '()))
     (if (null? in)
         (reverse ret)
@@ -541,6 +557,7 @@
                applicable-variants)))]))
 
 (define (package-parameter-spec package)
+  "Takes a package PACKAGE and returns its parameter-spec."
   (or (assq-ref (package-properties package) 'parameter-spec)
       '()))
 
@@ -550,6 +567,7 @@
 ;;   Works on Parameters? -> parameter-spec/fun
 ;;   Works on Parameter-Spec? -> parameter-spec/fun
 (define (parameter-spec-get-parameter pspec pcons)
+  "Takes a parameter cell PCONS and returns the corresponding package-parameter."
   (let ((psym (get-parameter-sym pcons)))
   (or (find (lambda (x)
                (eqv? psym
@@ -561,6 +579,7 @@
                 psym)))))
 
 (define (parameter-spec-negation-supported? pspec x)
+  "Is negation supported for the given parameter X?"
   (let ((negv
          (parameter-type-negation (package-parameter-type (parameter-spec-get-parameter pspec x)))))
     (if negv
@@ -568,6 +587,7 @@
         '_)))
 
 (define (get-spec-deps pspec psym)
+  "Get the dependencies of the corresponding parameter to a given parameter symbol, PSYM."
   (let ([p (parameter-spec-get-parameter pspec psym)])
     (return-list
      (assq-ref (package-parameter-dependencies p)
@@ -576,6 +596,7 @@
 ;; 1. Fetching
 
 (define (base-parameter-alist pspec) ; returns base case
+  "Returns the BASE-PARAMETER-ALIST for a given parameter-spec PSPEC."
   ;; '((a . psym) (b . #f) ...)
   (let* ((v1 (parameter-process-list ; returns funneled list
               (append-everything
@@ -598,6 +619,7 @@
 
 ;; IMPORTANT CHANGE: Symbolic Negation no longer supported (psym!)
 (define (parameter-process-list lst)
+  "Processes and formats a list of parameters, LST."
   (define (return-cell p)
     (match p
       [(a b) (cons a b)]
@@ -634,8 +656,8 @@
 
 ;; 3. Overriding
 
-;; This will get us all the parameters
 (define (all-spec-parameters pspec) ; for the UI
+  "Returns all the parameters in a parameter-spec, PSPEC."
   ;; '(sym-a sym-b ...)
   (delete-duplicates
    (map get-parameter-sym ; we do not care about the values
@@ -653,7 +675,8 @@
 ;; Now we compare it against the PLIST
 ;; NOTE: This is the only instance where GLOBAL PARAMETERS may be used
 ;;       Since referring to the package is not possible, we pass it instead of pspec
-(define (parameter-spec-override-plist pkg plist)
+(define (package-override-plist pkg plist)
+  "Takes a package PKG and parameter-list PLIST and overrides PLIST according to the package."
   (let* ((pspec (package-parameter-spec pkg))
          (all-p (all-spec-parameters pspec))
          (filtered-plist (filter (lambda (x) (or (member (car x) all-p)
@@ -674,6 +697,7 @@
 ;; 4. Funneling
 
 (define (override-spec-multi-match pspec plst)
+  "Overrides various keyword values in the parameter-list PLST."
   (map
     (match-lambda
       [(a . '_)
@@ -691,6 +715,7 @@
 ;; 5. Validation
 
 (define (parameter-spec-validate pspec plst)
+  "Validates a parameter-list PLST against the parameter-spec PSPEC."
   (define (process-multi-list lst)
     (apply append
            (map (lambda (x)
@@ -813,11 +838,12 @@
     works?))
 
 ;; need pkg instead of pspec for override-spec
-(define (spec-resolve-list pkg plst)
+(define (package-resolve-parameter-list pkg plst)
+  "Resolves a parameter-list PLST against the package PKG."
   (let* ([pspec (package-parameter-spec pkg)]
          [proper-plst (override-spec-multi-match
                       pspec
-                      (parameter-spec-override-plist
+                      (package-override-plist
                        pkg
                        (parameter-process-list plst)))])
     (if (parameter-spec-validate pspec proper-plst)
