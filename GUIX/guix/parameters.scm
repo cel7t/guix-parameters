@@ -52,6 +52,7 @@
             define-global-parameter;
 
             package-with-parameters;
+            parameterize-package;
             apply-variants;
             parameter-spec-parameter-alist;
             parameter-if;
@@ -376,6 +377,17 @@
     ;; VARS: [(psym val) (OPTION . (option args) ...) (OPTION-2 ...) ...]
 (define (apply-variants pkg vars)
   "Apply a list of variants, VARS to the given package PKG."
+  (define (exact-sub v)
+    (if (list? v)
+        (map exact-sub v)
+        (match v
+          [#:package-name
+           (package-name pkg)]
+          [#:package
+           pkg]
+          [#:parameter-value
+           (cdar vars)]
+          [x x])))
   ;; substitute keywords - transforms
   (define* (sub-kw-t in #:optional (ret '()))
     (if (null? in)
@@ -385,14 +397,7 @@
         (sub-kw-t
          (cdr in)
          (cons
-          (match (car in)
-            [#:package-name
-             (package-name pkg)]
-            [#:package
-             pkg]
-            [#:parameter-value
-             (cdar vars)]
-            [x x])
+          (exact-sub (car in))
           ret))))
   ;; substitute keywords
   (define* (sub-kw in #:optional (ret '()))
@@ -401,14 +406,7 @@
         (sub-kw
          (cdr in)
          (cons
-          (match (car in)
-            [#:package-name
-             (package-name pkg)]
-            [#:package
-             pkg]
-            [#:parameter-value
-             (cdar vars)]
-            [x x])
+          (exact-sub (car in))
           ret))))
 
   (cond [(null? (cdr vars))
@@ -451,115 +449,137 @@
                            (cons (cons 'parameter-spec
                                      spec)
                                  (package-properties the-package-0)))))]
-       (define-macro (assq-ov! asslst key val)
-         `(set! ,asslst
-            (assq-set! ,asslst ,key ,val)))
-       (define smoothen
-         (match-lambda
-           [(a . #:off)
-            (cons a
-                  (parameter-type-negation
-                   (package-parameter-type (parameter-spec-get-parameter spec a))))]
-           [(a . #:default)
-            (cons a
-                  (parameter-type-default
-                   (package-parameter-type (parameter-spec-get-parameter spec a))))]
-           [cell cell]))
+       (parameterize-package the-package
+                             (parameter-spec-parameter-alist spec)
+                             #:force-parameterization? #t))]))
 
+(define* (parameterize-package the-initial-package
+                               the-initial-list
+                               #:key (force-parameterization? #f))
+  "Evaluates THE-INITIAL-PACKAGE with the parameter-list THE-INITIAL-LIST."
+  (define-macro (assq-ov! asslst key val)
+    `(set! ,asslst
+       (assq-set! ,asslst ,key ,val)))
 
-       (let* [(the-spec  ; this value gets called very often
-                (package-parameter-spec the-package))
-              (the-parameter-list
-               (parameter-spec-parameter-alist
-                the-spec))
-              (the-variants
-               ;; first get list of normal variants (local, etc)
-               ;; then match over use-variants
-               ;; if cdr #:yes, check the-parameter-list for val
-               ;; if cdr #:no, purge from prev list
-               ;; if cdr #:special, /replace/ value
-               (let ((var-lst (parameter-spec-use-variants the-spec)))
-                 (map (lambda (x)
-                        (set! var-lst
-                          (assq-set! var-lst
-                                   (car x)
-                                   (package-parameter-variants
-                                    (parameter-spec-get-parameter the-spec (car x))))))
-                      (filter (lambda (x)
-                                (match (package-parameter-predicate
-                                        (parameter-spec-get-parameter
-                                         the-spec
-                                         (car x)))
-                                  [#f #f]
-                                  [#t #t]
-                                  [fn (fn the-package)]))
-                              (filter
-                               (lambda (x)
-                                 (not (assq-ref var-lst (car x)))) ; not in the variant-lst?
-                               the-parameter-list)))
-                 (map
-                  (lambda (x)
-                    (match (cdr x)
-                      [#:yes (assq-ov! var-lst
+  (define smoothen
+    (match-lambda
+      [(a . #:off)
+       (cons a
+             (parameter-type-negation
+              (package-parameter-type (parameter-spec-get-parameter spec a))))]
+      [(a . #:default)
+       (cons a
+             (parameter-type-default
+              (package-parameter-type (parameter-spec-get-parameter spec a))))]
+      [cell cell]))
+
+  (let* [(the-initial-spec 
+          (package-parameter-spec the-initial-package))
+         (the-parameter-list
+          (package-resolve-parameter-list the-initial-package
+                                          the-initial-list))
+         (the-original-parameter-list
+          (parameter-spec-parameter-alist
+           the-initial-spec))]
+    ;; exit and return the same package if no impactful changes
+    ;; XXX: make it more sophisticated, only measure parameters that change things
+    (if (and (null? (filter (lambda (x) (not (eqv? (assq-ref the-original-parameter-list
+                                                   (car x))
+                                         (cdr x))))
+                            the-parameter-list))
+             (not force-parameterization?))
+        the-initial-package
+        (let* [(the-spec ; this value gets called very often
+                (parameter-spec
+                 (inherit the-initial-spec)
+                 (parameter-alist
+                  the-parameter-list)))
+               (the-package
+                (package
+                  (inherit the-initial-package)
+                  (properties (assq-set! (package-properties the-initial-package)
+                                         'parameter-spec
+                                         the-spec))))
+               (the-variants
+                ;; first get list of normal variants (local, etc)
+                ;; then match over use-variants
+                ;; if cdr #:yes, check the-parameter-list for val
+                ;; if cdr #:no, purge from prev list
+                ;; if cdr #:special, /replace/ value
+                (let ((var-lst (parameter-spec-use-variants the-spec)))
+                  (map (lambda (x)
+                         (set! var-lst
+                           (assq-set! var-lst
+                                      (car x)
+                                      (package-parameter-variants
+                                       (parameter-spec-get-parameter the-spec (car x))))))
+                       (filter (lambda (x)
+                                 (match (package-parameter-predicate
+                                         (parameter-spec-get-parameter
+                                          the-spec
+                                          (car x)))
+                                   [#f #f]
+                                   [#t #t]
+                                   [fn (fn the-package)]))
+                               (filter
+                                (lambda (x)
+                                  (not (assq-ref var-lst (car x)))) ; not in the variant-lst?
+                                the-parameter-list)))
+                  (map
+                   (lambda (x)
+                     (match (cdr x)
+                       [#:yes (assq-ov! var-lst
                                         (car x)
                                         (package-parameter-variants
                                          (parameter-spec-get-parameter the-spec (car x))))]
-                      [#:no (set! var-lst
-                              (assq-remove! var-lst
-                                          (car x)))]
-                      [_ #f]))
-                  var-lst)
+                       [#:no (set! var-lst
+                               (assq-remove! var-lst
+                                             (car x)))]
+                       [_ #f]))
+                   var-lst)
 
-                 var-lst))
-              (applicable-variants
-               (map (lambda (y)
-                      (cons (cons (car y)
-                                  (assq-ref the-parameter-list (car y)))
-                            (apply append
-                             (map (lambda (x)
-                                    (return-list (cdr x)))
-                                  (cdr y)))))
-                    ;; does it have values?
-                    (filter (lambda (x) (not (null? (cdr x))))
-                    (filter ;; get list of applicable values
-                     (lambda (x)
-                       (let* ((absv (assq-ref the-parameter-list (car x)))
-                         ;; if absv is -ve, only -ve values allowed
-                         ;; if absv is +ve, only +ve and _ allowed
-                             (negv (parameter-type-negation
-                                    (package-parameter-type
-                                    (parameter-spec-get-parameter the-spec (car x)))))
-                             (defv? (eqv? absv
-                                    (parameter-type-default
-                                    (package-parameter-type
-                                    (parameter-spec-get-parameter the-spec (car x)))))))
-                         (if (eqv? absv negv) ; -ve?
-                             (filter
-                              (lambda (ls)
-                                (match (car ls)
-                                  [#:off #t]
-                                  [negv #t]
-                                  [_ #f]))
-                              (cdr x))
-                             (filter
-                              (lambda (ls)
-                                (match (car ls)
-                                  ['_ #t]
-                                  [absv #t]
-                                  [#:default defv?]
-                                  [_ #f]))
-                              (cdr x)))))
-                     (filter (lambda (x) assq-ref the-parameter-list (car x))
-                       the-variants)))))]
-         (fold (lambda (vlst pack)
-                 (apply-variants pack vlst))
-               the-package
-               applicable-variants)))]))
+                  var-lst))
+               (applicable-variants
+                (map (lambda (y)
+                       (cons (cons (car y)
+                                   (assq-ref the-parameter-list (car y)))
+                             (apply append
+                                    (map (lambda (x)
+                                           (return-list (cdr x)))
+                                         (cdr y)))))
+                     ;; does it have values?
+                     (filter (lambda (x) (not (null? (cdr x))))
+                             (map ;; get list of applicable values
+                              (lambda (x)
+                                (let* ((absv (assq-ref the-parameter-list (car x)))
+                                       ;; if absv is -ve, only -ve values allowed
+                                       ;; if absv is +ve, only +ve and _ allowed
+                                       (negv (parameter-type-negation
+                                              (package-parameter-type
+                                               (parameter-spec-get-parameter the-spec (car x)))))
+                                       (defv (parameter-type-default
+                                                     (package-parameter-type
+                                                      (parameter-spec-get-parameter the-spec (car x))))))
+                                  (cons (car x)
+                                      (filter
+                                       (lambda (ls)
+                                         (match (car ls)
+                                           ['_ (not (eqv? absv negv))]
+                                           [#:off (eqv? absv negv)]
+                                           [#:default (eqv? absv defv)]
+                                           [oth (eqv? absv oth)]))
+                                       (cdr x)))))
+                              (filter (lambda (x) assq-ref the-parameter-list (car x))
+                                      the-variants)))))]
+          (fold (lambda (vlst pack)
+                  (apply-variants pack vlst))
+                the-package
+                applicable-variants)))))
 
 (define (package-parameter-spec package)
   "Takes a package PACKAGE and returns its parameter-spec."
   (or (assq-ref (package-properties package) 'parameter-spec)
-      '()))
+      (parameter-spec))) ; returns empty spec
 
 ;;; PROCESSING PIPELINE
 
@@ -876,7 +896,7 @@
   (syntax-rules ()
     [(parameter-if property exp)
      (let ((properties
-            (parameter-spec/parameter-alist
+            (parameter-spec-parameter-alist
              (package-parameter-spec this-package))))
        (if (member
             #t
@@ -886,7 +906,7 @@
            '()))]
     [(parameter-if property exp exp-else)
      (let ((properties
-            (parameter-spec/parameter-alist
+            (parameter-spec-parameter-alist
              (package-parameter-spec this-package))))
        (if (member
             #t
@@ -898,7 +918,7 @@
 (define-syntax parameter-if-all
   (syntax-rules ()
     [(parameter-if-all property exp)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (if (not (member
                      #f
             (map (cut parameter-inside? <> properties)
@@ -906,7 +926,7 @@
            exp
            '()))]
     [(parameter-if-all property exp exp-else)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (if (not (member
                      #f
             (map (cut parameter-inside? <> properties)
@@ -920,14 +940,14 @@
     [(% (_ clauses ...)) (begin clauses ...)]
     [(% ((parameters ...)) rest ...) (parameter-match-any rest ...)]
     [(% ((parameters ...) clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (cut parameter-inside? <> properties)
                               (list parameters ...)))
               (begin clauses ...))
          (parameter-match-any rest ...)))]
     [(% (parameter clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (parameter-inside? parameter properties)
               (begin clauses ...))
@@ -939,14 +959,14 @@
     [(% (_ clauses ...)) (begin clauses ...)]
     [(% ((parameters ...)) rest ...) (parameter-match-all rest ...)]
     [(% ((parameters ...) clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (cut parameter-inside? <> properties)
                                    (list parameters ...))))
               (begin clauses ...))
          (parameter-match-all rest ...)))]
     [(% (parameter clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (parameter-inside? parameter properties)
               (begin clauses ...))
@@ -958,13 +978,13 @@
     [(% (_ clauses ...)) (begin clauses ...)]
     [(% ((parameters ...)) rest ...) (parameter-match-case-any rest ...)]
     [(% ((parameters ...) clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (and (not (member #f (map (cut parameter-inside? <> properties)
                                  (list parameters ...))))
             (begin clauses ...)
             (parameter-match-case-any rest ...)))]
     [(% (parameter clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (and (parameter-inside? parameter properties)
             (begin clauses ...)
             (parameter-match-case-any rest ...)))]))
@@ -975,21 +995,21 @@
     [(% (_ clauses ...) rest ...) (begin (begin clauses ...) (parameter-match rest ...))]
     [(% (parameters) rest ...) (parameter-match rest ...)]
     [(% ((all parameters ...) clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (not (member #f (map (cut parameter-inside? <> properties)
                                    (list parameters ...))))
               (begin clauses ...))
          (parameter-match rest ...)))]
     [(% ((parameters ...) clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (member #t (map (cut parameter-inside? <> properties)
                               (list parameters ...)))
               (begin clauses ...))
          (parameter-match rest ...)))]
     [(% (parameter clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (begin
          (and (parameter-inside? parameter properties)
               (begin clauses ...))
@@ -1001,19 +1021,19 @@
     [(% (_ clauses ...) rest ...) (begin clauses ...)]
     [(% (parameters) rest ...) (parameter-match-case rest ...)]
     [(% ((all parameters ...) clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (if (not (member #f (map (cut parameter-inside? <> properties)
                                 (list parameters ...))))
            (begin clauses ...)
            (parameter-match-case rest ...)))]
     [(% ((parameters ...) clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (if (member #t (map (cut parameter-inside? <> properties)
                            (list parameters ...)))
            (begin clauses ...)
            (parameter-match-case rest ...)))]
     [(% (parameter clauses ...) rest ...)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (if (parameter-inside? parameter properties)
            (begin clauses ...)
            (parameter-match-case rest ...)))]))
@@ -1023,14 +1043,14 @@
     [(% _ exp exp2)
      exp]
     [(% (all parameters ...) exp exp2)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (if (member #t
                    (map (cut parameter-inside? <> properties)
                         (list parameters ...)))
            exp
            exp2))]
     [(% parameter exp exp2)
-     (let ((properties (parameter-spec/parameter-alist (package-parameter-spec this-package))))
+     (let ((properties (parameter-spec-parameter-alist (package-parameter-spec this-package))))
        (if (member
                 #t
                 (map (cut parameter-inside? <> properties)
