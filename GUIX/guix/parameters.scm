@@ -889,7 +889,7 @@
   (syntax-rules ()
     [(% p plst)
      (not
-      (eqv? (or (assq-ref plst p)
+      (eqv? (or (assq-ref plst (car p))
                 (error "Parameter not found!"))
             (parameter-type-negation
              (package-parameter-type
