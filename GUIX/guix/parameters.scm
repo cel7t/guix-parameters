@@ -475,20 +475,20 @@
 
   (let* [(the-initial-spec 
           (package-parameter-spec the-initial-package))
+         (the-original-parameter-list
+          (package-parameter-alist the-initial-package))
          (the-parameter-list
           (package-resolve-parameter-list the-initial-package
-                                          the-initial-list))
-         (the-original-parameter-list
-          (parameter-spec-parameter-alist
-           the-initial-spec))]
+                                          the-initial-list))]
     ;; exit and return the same package if no impactful changes
     ;; XXX: make it more sophisticated, only measure parameters that change things
-    (if (and (null? (filter (lambda (x) (not (eqv? (assq-ref the-original-parameter-list
+    (if (and (not force-parameterization?)
+             (null? (filter (lambda (x)
+                              (not (eqv? (assq-ref the-original-parameter-list
                                                    (car x))
                                          (cdr x))))
-                            the-parameter-list))
-             (not force-parameterization?))
-        the-initial-package
+                            the-parameter-list)))
+             the-initial-package
         (let* [(the-spec ; this value gets called very often
                 (parameter-spec
                  (inherit the-initial-spec)
@@ -551,24 +551,24 @@
                      (filter (lambda (x) (not (null? (cdr x))))
                              (map ;; get list of applicable values
                               (lambda (x)
-                                (let* ((absv (assq-ref the-parameter-list (car x)))
-                                       ;; if absv is -ve, only -ve values allowed
-                                       ;; if absv is +ve, only +ve and _ allowed
-                                       (negv (parameter-type-negation
-                                              (package-parameter-type
-                                               (parameter-spec-get-parameter the-spec (car x)))))
-                                       (defv (parameter-type-default
-                                                     (package-parameter-type
-                                                      (parameter-spec-get-parameter the-spec (car x))))))
+                                (let ((absv (assq-ref the-parameter-list (car x)))
+                                      ;; if absv is -ve, only -ve values allowed
+                                      ;; if absv is +ve, only +ve and _ allowed
+                                      (negv (parameter-type-negation
+                                             (package-parameter-type
+                                              (parameter-spec-get-parameter the-spec (car x)))))
+                                      (defv (parameter-type-default
+                                             (package-parameter-type
+                                              (parameter-spec-get-parameter the-spec (car x))))))
                                   (cons (car x)
-                                      (filter
-                                       (lambda (ls)
-                                         (match (car ls)
-                                           ['_ (not (eqv? absv negv))]
-                                           [#:off (eqv? absv negv)]
-                                           [#:default (eqv? absv defv)]
-                                           [oth (eqv? absv oth)]))
-                                       (cdr x)))))
+                                        (filter
+                                         (lambda (ls)
+                                           (match (car ls)
+                                             ['_ (not (eqv? absv negv))]
+                                             [#:off (eqv? absv negv)]
+                                             [#:default (eqv? absv defv)]
+                                             [oth (eqv? absv oth)]))
+                                         (cdr x)))))
                               (filter (lambda (x) assq-ref the-parameter-list (car x))
                                       the-variants)))))]
           (fold (lambda (vlst pack)
@@ -580,6 +580,11 @@
   "Takes a package PACKAGE and returns its parameter-spec."
   (or (assq-ref (package-properties package) 'parameter-spec)
       (parameter-spec))) ; returns empty spec
+
+(define (package-parameter-alist package)
+  "Takes a package PACKAGE and returns its parameter-list."
+  (parameter-spec-parameter-alist
+   (package-parameter-spec package)))
 
 ;;; PROCESSING PIPELINE
 
@@ -620,19 +625,19 @@
   ;; '((a . psym) (b . #f) ...)
   (let* ((v1 (parameter-process-list ; returns funneled list
               (append-everything
-                    (parameter-spec-defaults pspec)
-                    (parameter-spec-required pspec))))
+               (parameter-spec-defaults pspec)
+               (parameter-spec-required pspec))))
          (v2 (parameter-process-list
               (append-everything
                (apply append
                       ;; XXX: change to a filter-map
                       (filter (cut car <>)
-                      (map (cut get-spec-deps pspec <>)
-                           (return-list v1))))
+                              (map (cut get-spec-deps pspec <>)
+                                   (return-list v1))))
                v1))))
-         ;; funnel will signal duplication err
-         ;; check if base case is valid
-         (parameter-spec-validate pspec v2)
+    ;; funnel will signal duplication err
+    ;; check if base case is valid
+    (parameter-spec-validate pspec v2)
     v2))
 
 ;; 2. Processing

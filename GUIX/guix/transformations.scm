@@ -353,34 +353,59 @@ a checkout of the Git repository at the given URL."
         obj)))
 
 ;; {g23
-(define (evaluate-parameter-specs specs proc)
+
+;; how it works:
+;; pkg = parameter = val
+;; collect all ( parameter = val ) pairs for pkg and then apply them
+
+(define (evaluate-parameter-specs specs)
   "Parse SPECS, a list of strings like \"bitlbee=purple=true\", and return a
 list of spec/procedure pairs, where (PROC PACKAGE PARAMETER VALUE) is called
 to return the replacement package.  Raise an error if an element of SPECS uses
 invalid syntax, or if a package it refers to could not be found."
-  (map (lambda (spec)
-         (match (string-tokenize spec %not-equal)
-           ((spec name value)
-            (define (replace old)
-              (proc old name value))
-            (cons spec replace))
-           (_
-            (raise
-             (formatted-message
-              (G_ "invalid package parameter specification: ~s")
-              spec)))))
-       specs))
+  (let [(package-assq '())]
+    (map (lambda (spec)
+           (match (string-tokenize spec %not-equal)
+             ((pkg name value)
+              (set! package-assq
+                (assq-set! package-assq pkg
+                           (cons (cons (string->symbol name)
+                                       (string->symbol value))
+                                 (or (assq-ref package-assq pkg)
+                                     '())))))
+             (_
+              (raise
+               (formatted-message
+                (G_ "invalid package parameter specification: ~s")
+                spec)))))
+         specs)
+    (map (lambda (x) ; (<pkg> <plist>)
+           (let ((package-name (car x))
+                 (parameter-lst (cdr x)))
+             (cons package-name
+                   (lambda (x)
+                     (let* [(original-lst (map (lambda (x)
+                                                 (cons (car x) (cdr x)))
+                                               (parameter-spec-parameter-alist
+                                                (package-parameter-spec x))))
+                            (final-lst
+                             (fold (lambda (z y)
+                                     (assq-set! y
+                                                (car z)
+                                                (cdr z)))
+                                   original-lst
+                                   parameter-lst))]
+                       (parameterize-package x final-lst))))))
+         package-assq)))
 
 (define (transform-package-parameters replacement-specs)
   "Return a procedure that, when passed a package, replaces its direct
 dependencies according to REPLACEMENT-SPECS.  REPLACEMENT-SPECS is a list of
 strings like \"guile-next=stable-3.0\" meaning that packages are built using
 'guile-next' from the latest commit on its 'stable-3.0' branch."
-  (define (replace old name value)
-    (set-package-parameter-value old name value))
 
-  (let* ((replacements (evaluate-parameter-specs replacement-specs
-                                                 replace))
+  ;; we'll apply per-package parameterization and then return
+  (let* ((replacements (evaluate-parameter-specs replacement-specs))
          (rewrite      (package-input-rewriting/spec replacements)))
     (lambda (obj)
       (if (package? obj)
