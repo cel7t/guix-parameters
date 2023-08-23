@@ -43,6 +43,7 @@
             parameter-spec-property;?
             package-parameter-spec;
             all-spec-parameters;
+            all-spec-parameters-with-types;
             base-parameter-alist;
             parameter-process-list;
             package-override-plist;?
@@ -696,6 +697,28 @@
          (filter (lambda (x) (not (eqv? x '_)))
                  (apply append (parameter-spec-one-of pspec)))
          (parameter-spec-optional pspec)))))
+
+(define* (all-spec-parameters-with-types pspec #:key (show-booleans? #t))
+  (if show-booleans?
+      (map (lambda (x)
+             (string-append
+              (symbol->string x)
+              ":"
+              (symbol->string
+               (parameter-type-name
+                (package-parameter-type (parameter-spec-get-parameter pspec (cons x #f)))))))
+           (all-spec-parameters pspec))
+      (map (lambda (x)
+             (string-append
+              (symbol->string x)
+              ((lambda (x)
+                 (if (eqv? x 'boolean)
+                     ""
+                     (string-append ":" (symbol->string x))))
+               (parameter-type-name
+                (package-parameter-type (parameter-spec-get-parameter pspec (cons x #f)))))))
+           (all-spec-parameters pspec))))
+
 
 ;; Now we compare it against the PLIST
 ;; NOTE: This is the only instance where GLOBAL PARAMETERS may be used

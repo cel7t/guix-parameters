@@ -19,6 +19,7 @@
 ;;; Copyright © 2018 Steve Sprang <scs@stevesprang.com>
 ;;; Copyright © 2022 Taiju HIGASHI <higashi@taiju.info>
 ;;; Copyright © 2022 Liliana Marie Prikler <liliana.prikler@gmail.com>
+;;; Copyright © 2023 Sarthak Shah <shahsarthakw@gmail.com>
 ;;;
 ;;; This file is part of GNU Guix.
 ;;;
@@ -63,7 +64,7 @@
                 #:hide (package-name->name+version
                         ;; Avoid "overrides core binding" warning.
                         delete))
-  #:autoload   (guix parameters) (package-parameters package-parameter-name) ; g23
+  #:use-module (guix parameters) ; g23
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9 gnu)
   #:use-module (srfi srfi-11)
@@ -1586,10 +1587,11 @@ that may return a colorized version of its argument."
      (format port "outputs:~%~{~a~%~}"
              (map (cut output->recutils p <>) (package-outputs/out-last p)))))
    ;; {g23
-  (match (package-parameters p)
+  (match (all-spec-parameters-with-types
+          (package-parameter-spec p))
     (() #t)
     (lst (format port "parameters:~{ ~a~}~%"
-                 (map package-parameter-name lst))))
+                 lst)))
    ;; }
   (format port "systems: ~a~%"
           (split-lines (string-join (package-transitive-supported-systems p))
