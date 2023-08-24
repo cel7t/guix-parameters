@@ -386,8 +386,7 @@ invalid syntax, or if a package it refers to could not be found."
                    (lambda (x)
                      (let* [(original-lst (map (lambda (x)
                                                  (cons (car x) (cdr x)))
-                                               (parameter-spec-parameter-alist
-                                                (package-parameter-spec x))))
+                                               (package-parameter-alist x)))
                             (final-lst
                              (fold (lambda (z y)
                                      (assq-set! y

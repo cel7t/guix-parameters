@@ -42,6 +42,7 @@
             parameter-variant-match;
             parameter-spec-property;?
             package-parameter-spec;
+            package-parameter-alist;
             all-spec-parameters;
             all-spec-parameters-with-types;
             base-parameter-alist;
