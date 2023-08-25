@@ -101,12 +101,17 @@
                  (default (car (parameter-type-accepted-values this-parameter-type)))
                  (thunked))
   (default       parameter-type-default
-    (default (if (not (parameter-type-negation this-parameter-type))
-                 (car (parameter-type-accepted-values this-parameter-type))
-                 (cadr (parameter-type-accepted-values this-parameter-type))))
-    (thunked))
-  (description   parameter-type-description
-                 (default "")))
+                 (default (match (parameter-type-accepted-values this-parameter-type)
+                            [(first second . rest)
+                             (if (not (parameter-type-negation this-parameter-type))
+                                 first
+                                 second)]
+                            [oth (raise (formatted-message
+                                         (G_ "Bad accepted-values form: ~s")
+                                         oth))]))
+                 (thunked))
+    (description   parameter-type-description
+                   (default "")))
 
 (define boolean-parameter-type
   (parameter-type
@@ -130,7 +135,8 @@
                 (sanitize dependency-sanitizer)
                 (thunked))
   (predicate    package-parameter-predicate
-                (default #f))
+                (sanitize predicate-sanitizer)
+                (default (const #f)))
   (description  package-parameter-description (default "")))
 
 (define %global-parameters
@@ -144,6 +150,20 @@
         (else (raise (formatted-message
                       (G_ "Not a list: ~s")
                       ls)))))
+
+(define (predicate-sanitizer p)
+  (match p
+    [(? procedure? p) p]
+    [#t (and (warning
+              (G_ "Please use (const #t) instead of #t!~%"))
+             (const #t))]
+    [#f (and (warning
+              (G_ "Please use (const #f) instead of #f!~%"))
+             (const #f))]
+    [_ (raise (formatted-message
+               (G_ "Not a predicate: ~s")
+               p))]))
+    
 
 ;; % USEFUL HELPER FUNCTIONS %
 
@@ -164,31 +184,72 @@
     [(a . b) a]
     [a a]))
 
+;; (define* (merge-same-car lst #:optional (carry '()))
+;;   "Merge the cells of LST with the same value in their CAR."
+;;   (define (assq-append alist key cont)
+;;     (if (equal? (caar alist) key)
+;;         (cons (cons key (append (cdar alist) cont))
+;;               (cdr alist))
+;;         (cons (car alist) (assq-append (cdr alist) key cont))))
+;;   (cond ((null? lst) carry)
+;;         ((null? (filter (lambda (y) (equal? (caar lst)
+;;                                           (car y)))
+;;                         carry))
+;;          (merge-same-car (cdr lst) (cons (car lst) carry)))
+;;         (else
+;;          (merge-same-car (cdr lst)
+;;                          (assq-append carry (caar lst) (cdar lst))))))
+
 (define* (merge-same-car lst #:optional (carry '()))
   "Merge the cells of LST with the same value in their CAR."
-  (define (assq-append alist key cont)
-    (if (equal? (caar alist) key)
-        (cons (cons key (append (cdar alist) cont))
-              (cdr alist))
-        (cons (car alist) (assq-append (cdr alist) key cont))))
-  (cond ((null? lst) carry)
-        ((null? (filter (lambda (y) (equal? (caar lst)
-                                          (car y)))
+  (match lst
+    [((a . b) . rest)
+     (if (null? (filter (lambda (y) (equal? a (car y)))
                         carry))
-         (merge-same-car (cdr lst) (cons (car lst) carry)))
-        (else
-         (merge-same-car (cdr lst)
-                         (assq-append carry (caar lst) (cdar lst))))))
+         (merge-same-car rest (cons (cons a b) carry))
+         (merge-same-car rest (assq-set! carry
+                                         a
+                                         (append (assq-ref carry a) b))))]
+    [() carry]))
+
+(define-syntax lambdize-lambdas
+  (syntax-rules ()
+    [(% #:lambda fn . rest)
+     (cons #:lambda
+           (cons fn
+                 (lambdize-lambdas . rest)))]
+    [(% x . rest)
+     (cons 'x (lambdize-lambdas . rest))]
+    [(%) '()]))
 
 (define-syntax parameter-variant
   (syntax-rules ()
     [(%) '()]
     [(% psym variants ...)
      (let ((parsed-variants
-            (parse-kw-list '(variants ...))))
+            (parse-kw-list (lambdize-lambdas variants ...))))
        (map (cut cons <>
                  parsed-variants)
        (return-list 'psym)))]))
+
+;; (define* (parse-kw-list kw-lst)
+;;   "Parses a list of keywords, KW-LST and returns an alist."
+;;   (define (list-till-kw lst)
+;;     (receive (a b)
+;;         (break keyword? lst)
+;;       (cons a b)))
+;;   (define* (break-keywords lst)
+;;     (cond ((null? lst) '())
+;;           ((null? (cdr lst)) '())
+;;           ((keyword? (car lst))
+;;            (let ((next-lst (list-till-kw (cdr lst))))
+;;              (cons (cons (keyword->symbol (car lst))
+;;                          (car next-lst))
+;;                    (break-keywords (cdr next-lst)))))
+;;           (else (raise (formatted-message
+;;                       (G_ "Error trying to break keywords at ~s")
+;;                       lst)))))
+;;   (merge-same-car (break-keywords kw-lst)))
 
 (define* (parse-kw-list kw-lst)
   "Parses a list of keywords, KW-LST and returns an alist."
@@ -197,16 +258,21 @@
         (break keyword? lst)
       (cons a b)))
   (define* (break-keywords lst)
-    (cond ((null? lst) '())
-          ((null? (cdr lst)) '())
-          ((keyword? (car lst))
-           (let ((next-lst (list-till-kw (cdr lst))))
-             (cons (cons (keyword->symbol (car lst))
-                         (car next-lst))
-                   (break-keywords (cdr next-lst)))))
-          (else (raise (formatted-message
-                      (G_ "Error trying to break keywords at ~s")
-                      lst)))))
+    (match lst
+      [((? keyword? key) vals ..1)
+       (match (list-till-kw vals)
+         [(first . rest)
+         (cons (cons (keyword->symbol key)
+                     first)
+               (break-keywords rest))])]
+      [((? keyword? just-a-key)) ; (... #:key)
+       (cons (cons (keyword->symbol just-a-key) '())
+             '())]
+      [(singleton) '()]
+      [()          '()]
+      [_           (raise (formatted-message
+                           (G_ "Error trying to break keywords at ~a")
+                           lst))]))
   (merge-same-car (break-keywords kw-lst)))
 
 ;; The lock here is used to signal when merge-same-car is to be used
@@ -324,7 +390,9 @@
                 deps)))
     (if (keyword? (car deps))
       (if (match (car deps)
-                 [#:package #t]
+                 [#:package (and (warning
+                                  (G_ "Package Dependencies are not supported!~%"))
+                                 #t)]
                  [#:parameter #t]
                  [_ #f])
              (parse-kw-list deps)
@@ -380,16 +448,16 @@
 (define (apply-variants pkg vars)
   "Apply a list of variants, VARS to the given package PKG."
   (define (exact-sub v)
-    (if (list? v)
-        (map exact-sub v)
-        (match v
-          [#:package-name
-           (package-name pkg)]
-          [#:package
-           pkg]
-          [#:parameter-value
-           (cdar vars)]
-          [x x])))
+    (match v
+      [(lst ...) ; to traverse the tree
+       (map exact-sub v)]
+      [#:package-name
+       (package-name pkg)]
+      [#:package
+       pkg]
+      [#:parameter-value
+       (cdar vars)]
+      [x x]))
   ;; substitute keywords - transforms
   (define* (sub-kw-t in #:optional (ret '()))
     (if (null? in)
@@ -411,43 +479,89 @@
           (exact-sub (car in))
           ret))))
 
-  (cond [(null? (cdr vars))
-         pkg] ; ((psym val))
-        [(null? (cdadr vars)) ; ((psym val) (option))
-         (apply-variants pkg (cons (car vars) (cddr vars)))]
-        [#t
-         (match (caadr vars) ; ((psym . val) . (<option> optargs) ...)
-           ('build-system
-            ;; halt execution if it does not match
-            (if
-             (member (package-build-system the-package)
-                     (cdadr vars)) ; will be a list of build systems
-             (apply-variants pkg (cons (car vars)
-                                       (cddr vars)))
-             pkg))
-           ('transform
-            (apply-variants
-             ((options->transformation
-              (map sub-kw-t (return-list (cdadr vars))))
-              pkg)
-             (cons (car vars)
-                   (cddr vars))))
-           ('lambda
-               (apply-variants
-                ;; eval should normally be avoided
-                ;; but `lambda` as is defined evaluates
-                ;; code after substituting in keywords
-                (primitive-eval (sub-kw (cadadr vars)))
-                (cons (car vars)
-                      (cddr vars)))))]))
+  (match vars
+    [(pcell (option optargs ...) . rest)
+     (match option
+       ['build-system
+         ;; halt execution if it does not match
+         (if (member (package-build-system the-package)
+                     optargs) ; will be a list of build systems
+             (apply-variants pkg (cons pcell
+                                       rest))
+             pkg)]
+       ['transform
+        (apply-variants
+         ((options->transformation
+           (map sub-kw-t optargs))
+          pkg)
+         (cons pcell
+               rest))]
+       ['lambda
+           (apply-variants
+            ;; eval should normally be avoided
+            ;; but `lambda` as is defined evaluates
+            ;; code after substituting in keywords
+            ;; (primitive-eval (sub-kw (car optargs)))
+            (case (car (procedure-minimum-arity (car optargs)))
+              [(0) ((car optargs))]
+              [(1) ((car optargs) pkg)]
+              [(2) ((car optargs) pkg (cdr pcell))]
+              [else (raise (formatted-message
+                (G_ "Procedure ~s has invalid arity.")
+                (car optargs)))])
+            (cons pcell
+                  rest))]
+       [oth
+        (raise (formatted-message
+                (G_ "Invalid Option: ")
+                oth))])]
+    [(pcell (option) . rest)
+     (apply-variants pkg (cons pcell rest))]
+    [(pcell) pkg]
+    [_ (raise (formatted-message
+                (G_ "Poorly formatted variant spec: ~s")
+                vars))]))
+  
+  ;; (cond [(null? (cdr vars))
+  ;;        pkg] ; ((psym val))
+  ;;       [(null? (cdadr vars)) ; ((psym val) (option))
+  ;;        (apply-variants pkg (cons (car vars) (cddr vars)))]
+  ;;       [#t
+  ;;        (match (caadr vars) ; ((psym . val) . (<option> optargs) ...)
+  ;;          ('build-system
+  ;;           ;; halt execution if it does not match
+  ;;           (if
+  ;;            (member (package-build-system the-package)
+  ;;                    (cdadr vars)) ; will be a list of build systems
+  ;;            (apply-variants pkg (cons (car vars)
+  ;;                                      (cddr vars)))
+  ;;            pkg))
+  ;;          ('transform
+  ;;           (apply-variants
+  ;;            ((options->transformation
+  ;;             (map sub-kw-t (return-list (cdadr vars))))
+  ;;             pkg)
+  ;;            (cons (car vars)
+  ;;                  (cddr vars))))
+  ;;          ('lambda
+  ;;              (apply-variants
+  ;;               ;; eval should normally be avoided
+  ;;               ;; but `lambda` as is defined evaluates
+  ;;               ;; code after substituting in keywords
+  ;;               (primitive-eval (sub-kw (cadadr vars)))
+  ;;               (cons (car vars)
+  ;;                     (cddr vars)))))]))
 
 (define-syntax package-with-parameters
   (syntax-rules ()
     [(% spec body ...)
      (let* [(the-package-0 (package body ...))
            (the-package (package
-                         (inherit the-package-0)
-                         (properties
+                          (inherit the-package-0)
+                          (replacement (package-replacement the-package-0))
+                          (location    (package-location    the-package-0))
+                          ; (definition-location (package-definition-location the-package-0))
+                          (properties
                            (cons (cons 'parameter-spec
                                      spec)
                                  (package-properties the-package-0)))))]
@@ -499,6 +613,9 @@
                (the-package
                 (package
                   (inherit the-initial-package)
+                  (replacement         (package-replacement the-initial-package))
+                  (location            (package-location    the-initial-package))
+                  ; (definition-location (package-definition-location      the-initial-package))
                   (properties (assq-set! (package-properties the-initial-package)
                                          'parameter-spec
                                          the-spec))))
@@ -516,13 +633,11 @@
                                       (package-parameter-variants
                                        (parameter-spec-get-parameter the-spec (car x))))))
                        (filter (lambda (x)
-                                 (match (package-parameter-predicate
-                                         (parameter-spec-get-parameter
-                                          the-spec
-                                          (car x)))
-                                   [#f #f]
-                                   [#t #t]
-                                   [fn (fn the-package)]))
+                                 ((package-parameter-predicate
+                                   (parameter-spec-get-parameter
+                                    the-spec
+                                    (car x)))
+                                  the-package))
                                (filter
                                 (lambda (x)
                                   (not (assq-ref var-lst (car x)))) ; not in the variant-lst?
@@ -571,7 +686,7 @@
                                              [#:default (eqv? absv defv)]
                                              [oth (eqv? absv oth)]))
                                          (cdr x)))))
-                              (filter (lambda (x) assq-ref the-parameter-list (car x))
+                              (filter (lambda (x) (assq-ref the-parameter-list (car x)))
                                       the-variants)))))]
           (fold (lambda (vlst pack)
                   (apply-variants pack vlst))
@@ -654,17 +769,30 @@
       [a (cons a '_)]))
   (define (funnel plst)
     ;; first we will get a list indexed by keys
-    (define (group-val carry lst)
-      (if (null-list? lst)
-          carry
-          (let ((v (assq-ref carry (caar lst))))
-            (group-val
-             (assq-set! carry (caar lst)
-                        (if v
-                            (cons (cdar lst) v)
-                            ;; We want a list in cdr
-                            (cons (cdar lst) '())))
-             (cdr lst)))))
+    ;; (define (group-val carry lst)
+    ;;   (if (null-list? lst)
+    ;;       carry
+    ;;       (let ((v (assq-ref carry (caar lst))))
+    ;;         (group-val
+    ;;          (assq-set! carry (caar lst)
+    ;;                     (if v
+    ;;                         (cons (cdar lst) v)
+    ;;                         ;; We want a list in cdr
+    ;;                         (cons (cdar lst) '())))
+    ;;          (cdr lst)))))
+    (define* (group-val lst #:optional (carry '()))
+      (match lst
+        [((a . b) . rest)
+         (let ((v (assq-ref carry a)))
+           (group-val rest
+                      (assq-set! carry
+                                 a
+                                 (cons b
+                                       (if v v '())))))]
+        [() carry]
+        [_ (raise (formatted-message
+                   (G_ "Poorly formatted assoc-list in group-val! ~s")
+                   lst))]))
     (define (figure-out psym p)
       (or (and (< (length p) 3)
                (or (and (eq? (length p) 1) (car p))
@@ -676,7 +804,7 @@
     (map (lambda (x) (cons (car x)
                       (figure-out (car x) ; for the error message
                        (delete-duplicates (cdr x)))))
-         (group-val '() plst)))
+         (group-val plst)))
   (funnel (map
                return-cell
                lst)))
@@ -833,17 +961,17 @@
            (throw+f "Unsatisfied One-Of" ls)))
        (parameter-spec-one-of pspec))
 
-      (unless
-        (null?
-          (let ((symlst (map car plst)))
-          (filter (lambda (x)
-                    (let ((deps (package-parameter-dependencies
-                                  (parameter-spec-get-parameter pspec
-                                                                x))))
-                      (not (assq-ref deps 'package))))
-                  symlst)))
-        (warning
-          (G_ "Package Dependencies are not supported!~%")))
+      ;; (unless
+      ;;   (null?
+      ;;     (let ((symlst (map car plst)))
+      ;;     (filter (lambda (x)
+      ;;               (let ((deps (package-parameter-dependencies
+      ;;                             (parameter-spec-get-parameter pspec
+      ;;                                                           x))))
+      ;;                 (not (assq-ref deps 'package))))
+      ;;             symlst)))
+      ;;   (warning ; move to dependency sanitizer
+      ;;     (G_ "Package Dependencies are not supported!~%")))
 
       (unless (not (member #f
                       (return-list
