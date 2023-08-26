@@ -184,22 +184,6 @@
     [(a . b) a]
     [a a]))
 
-;; (define* (merge-same-car lst #:optional (carry '()))
-;;   "Merge the cells of LST with the same value in their CAR."
-;;   (define (assq-append alist key cont)
-;;     (if (equal? (caar alist) key)
-;;         (cons (cons key (append (cdar alist) cont))
-;;               (cdr alist))
-;;         (cons (car alist) (assq-append (cdr alist) key cont))))
-;;   (cond ((null? lst) carry)
-;;         ((null? (filter (lambda (y) (equal? (caar lst)
-;;                                           (car y)))
-;;                         carry))
-;;          (merge-same-car (cdr lst) (cons (car lst) carry)))
-;;         (else
-;;          (merge-same-car (cdr lst)
-;;                          (assq-append carry (caar lst) (cdar lst))))))
-
 (define* (merge-same-car lst #:optional (carry '()))
   "Merge the cells of LST with the same value in their CAR."
   (match lst
@@ -213,11 +197,16 @@
     [() carry]))
 
 (define-syntax lambdize-lambdas
-  (syntax-rules ()
+  (syntax-rules (:cruise)
+    [(% :cruise x . rest)
+     (if (keyword? x)
+         (cons 'x (lambdize-lambdas . rest))
+         (cons x (lambdize-lambdas :cruise . rest)))]
+    [(% :cruise) '()]
     [(% #:lambda fn . rest)
      (cons #:lambda
            (cons fn
-                 (lambdize-lambdas . rest)))]
+                 (lambdize-lambdas :cruise . rest)))]
     [(% x . rest)
      (cons 'x (lambdize-lambdas . rest))]
     [(%) '()]))
@@ -231,25 +220,6 @@
        (map (cut cons <>
                  parsed-variants)
        (return-list 'psym)))]))
-
-;; (define* (parse-kw-list kw-lst)
-;;   "Parses a list of keywords, KW-LST and returns an alist."
-;;   (define (list-till-kw lst)
-;;     (receive (a b)
-;;         (break keyword? lst)
-;;       (cons a b)))
-;;   (define* (break-keywords lst)
-;;     (cond ((null? lst) '())
-;;           ((null? (cdr lst)) '())
-;;           ((keyword? (car lst))
-;;            (let ((next-lst (list-till-kw (cdr lst))))
-;;              (cons (cons (keyword->symbol (car lst))
-;;                          (car next-lst))
-;;                    (break-keywords (cdr next-lst)))))
-;;           (else (raise (formatted-message
-;;                       (G_ "Error trying to break keywords at ~s")
-;;                       lst)))))
-;;   (merge-same-car (break-keywords kw-lst)))
 
 (define* (parse-kw-list kw-lst)
   "Parses a list of keywords, KW-LST and returns an alist."
@@ -440,11 +410,6 @@
      (cons 'parameter-spec
            (parameter-spec body ...))]))
 
-;; this fn will be applied to applicable variants
-  ;; varlst -> [(<psym cons> . options) (<psym cons> . options) ...]
-    ;; inner function
-    ;; PKG: package record
-    ;; VARS: [(psym val) (OPTION . (option args) ...) (OPTION-2 ...) ...]
 (define (apply-variants pkg vars)
   "Apply a list of variants, VARS to the given package PKG."
   (define (exact-sub v)
@@ -502,13 +467,17 @@
             ;; but `lambda` as is defined evaluates
             ;; code after substituting in keywords
             ;; (primitive-eval (sub-kw (car optargs)))
-            (case (car (procedure-minimum-arity (car optargs)))
-              [(0) ((car optargs))]
-              [(1) ((car optargs) pkg)]
-              [(2) ((car optargs) pkg (cdr pcell))]
-              [else (raise (formatted-message
-                (G_ "Procedure ~s has invalid arity.")
-                (car optargs)))])
+            (fold
+             (lambda (fn pack)
+               (case (car (procedure-minimum-arity fn))
+                 [(0) (fn)]
+                 [(1) (fn pack)]
+                 [(2) (fn pack (cdr pcell))]
+                 [else (raise (formatted-message
+                               (G_ "Procedure ~s has invalid arity.")
+                               fn))]))
+             pkg
+             optargs)
             (cons pcell
                   rest))]
        [oth
@@ -522,49 +491,18 @@
                 (G_ "Poorly formatted variant spec: ~s")
                 vars))]))
   
-  ;; (cond [(null? (cdr vars))
-  ;;        pkg] ; ((psym val))
-  ;;       [(null? (cdadr vars)) ; ((psym val) (option))
-  ;;        (apply-variants pkg (cons (car vars) (cddr vars)))]
-  ;;       [#t
-  ;;        (match (caadr vars) ; ((psym . val) . (<option> optargs) ...)
-  ;;          ('build-system
-  ;;           ;; halt execution if it does not match
-  ;;           (if
-  ;;            (member (package-build-system the-package)
-  ;;                    (cdadr vars)) ; will be a list of build systems
-  ;;            (apply-variants pkg (cons (car vars)
-  ;;                                      (cddr vars)))
-  ;;            pkg))
-  ;;          ('transform
-  ;;           (apply-variants
-  ;;            ((options->transformation
-  ;;             (map sub-kw-t (return-list (cdadr vars))))
-  ;;             pkg)
-  ;;            (cons (car vars)
-  ;;                  (cddr vars))))
-  ;;          ('lambda
-  ;;              (apply-variants
-  ;;               ;; eval should normally be avoided
-  ;;               ;; but `lambda` as is defined evaluates
-  ;;               ;; code after substituting in keywords
-  ;;               (primitive-eval (sub-kw (cadadr vars)))
-  ;;               (cons (car vars)
-  ;;                     (cddr vars)))))]))
-
 (define-syntax package-with-parameters
   (syntax-rules ()
     [(% spec body ...)
      (let* [(the-package-0 (package body ...))
-           (the-package (package
-                          (inherit the-package-0)
-                          (replacement (package-replacement the-package-0))
-                          (location    (package-location    the-package-0))
-                          ; (definition-location (package-definition-location the-package-0))
-                          (properties
-                           (cons (cons 'parameter-spec
-                                     spec)
-                                 (package-properties the-package-0)))))]
+            (the-package (package
+                           (inherit the-package-0)
+                           (replacement (package-replacement the-package-0))
+                           (location    (package-location    the-package-0))
+                           (properties
+                            (cons (cons 'parameter-spec
+                                        spec)
+                                  (package-properties the-package-0)))))]
        (parameterize-package the-package
                              (parameter-spec-parameter-alist spec)
                              #:force-parameterization? #t))]))
@@ -597,7 +535,6 @@
           (package-resolve-parameter-list the-initial-package
                                           the-initial-list))]
     ;; exit and return the same package if no impactful changes
-    ;; XXX: make it more sophisticated, only measure parameters that change things
     (if (and (not force-parameterization?)
              (null? (filter (lambda (x)
                               (not (eqv? (assq-ref the-original-parameter-list
@@ -615,7 +552,6 @@
                   (inherit the-initial-package)
                   (replacement         (package-replacement the-initial-package))
                   (location            (package-location    the-initial-package))
-                  ; (definition-location (package-definition-location      the-initial-package))
                   (properties (assq-set! (package-properties the-initial-package)
                                          'parameter-spec
                                          the-spec))))
@@ -768,18 +704,6 @@
       [(a . b) p]
       [a (cons a '_)]))
   (define (funnel plst)
-    ;; first we will get a list indexed by keys
-    ;; (define (group-val carry lst)
-    ;;   (if (null-list? lst)
-    ;;       carry
-    ;;       (let ((v (assq-ref carry (caar lst))))
-    ;;         (group-val
-    ;;          (assq-set! carry (caar lst)
-    ;;                     (if v
-    ;;                         (cons (cdar lst) v)
-    ;;                         ;; We want a list in cdr
-    ;;                         (cons (cdar lst) '())))
-    ;;          (cdr lst)))))
     (define* (group-val lst #:optional (carry '()))
       (match lst
         [((a . b) . rest)
@@ -799,11 +723,11 @@
                    (and (member '_ p)
                         (car (delq '_ p)))))
           (raise (formatted-message
-                (G_ "Too many values for a single parameter: ~s with ~s")
-                psym p))))
+                  (G_ "Too many values for a single parameter: ~s with ~s")
+                  psym p))))
     (map (lambda (x) (cons (car x)
                       (figure-out (car x) ; for the error message
-                       (delete-duplicates (cdr x)))))
+                                  (delete-duplicates (cdr x)))))
          (group-val plst)))
   (funnel (map
                return-cell
@@ -960,18 +884,6 @@
                         (eqv? (car ls) '_))))
            (throw+f "Unsatisfied One-Of" ls)))
        (parameter-spec-one-of pspec))
-
-      ;; (unless
-      ;;   (null?
-      ;;     (let ((symlst (map car plst)))
-      ;;     (filter (lambda (x)
-      ;;               (let ((deps (package-parameter-dependencies
-      ;;                             (parameter-spec-get-parameter pspec
-      ;;                                                           x))))
-      ;;                 (not (assq-ref deps 'package))))
-      ;;             symlst)))
-      ;;   (warning ; move to dependency sanitizer
-      ;;     (G_ "Package Dependencies are not supported!~%")))
 
       (unless (not (member #f
                       (return-list
@@ -1262,3 +1174,23 @@
     [(% inputs)
      inputs]))
 
+;; Some global parameters
+
+(define-global-parameter
+  (package-parameter
+   (name 'static-lib)
+   (variants
+    (parameter-variant-match
+     (_ #:transform
+        (with-configure-flag #:package-name "=--disable-shared")
+        (with-configure-flag #:package-name "=--enable-static"))))
+   (predicate #t)))
+
+(define-global-parameter
+  (package-parameter
+   (name 'tests)
+   (variants
+    (parameter-variant-match
+     (#:off #:transform (without-tests #:package-name))))
+   (description "Toggle for tests")
+   (predicate #t)))
