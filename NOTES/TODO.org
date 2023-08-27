@@ -1,18 +1,16 @@
 #+TITLE:Todo
-* TODO OS-wide parameter declaration
-* TODO OS parameter reader
 * DONE Parameter conflict detector
-* TODO with-parameter transform
+* DONE with-parameter transform
 * TODO recursive with-parameter transform
-* TODO 'generic transforms' for parameters
-* Parameter Parser
-** TODO Rename the functions to more sensible names
+* DONE 'generic transforms' for parameters
+* DONE Parameter Parser
+** DONE Rename the functions to more sensible names
 ** DONE s/p\//parameters-/g
 ** DONE Modify parameter and package records
 ** DONE Add the parsers to guix/parameters.scm
-* Morphism Parser
+* DONE Morphism Parser
 ** DONE Parameter types indexable by numbers
 ** DONE ! -> (p 0)
 ** DONE _ -> match any nonzero type
-** TODO % -> package name
-** TODO package-with-parameters rewrite
+** DONE % -> package name
+** DONE package-with-parameters rewrite

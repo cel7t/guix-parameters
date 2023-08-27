@@ -1,4 +1,4 @@
-#+TITLE:Progress Log
+#+TITLE:Progress Log (defunct, see commit history instead)
 * -1/-1
 ** Created this repository
 ** Initial blog entry on parameterized packages and progress.org, todo.org and wishlist.org
