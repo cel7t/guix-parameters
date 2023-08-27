@@ -19,7 +19,7 @@
 ;;; Copyright © 2018 Steve Sprang <scs@stevesprang.com>
 ;;; Copyright © 2022 Taiju HIGASHI <higashi@taiju.info>
 ;;; Copyright © 2022 Liliana Marie Prikler <liliana.prikler@gmail.com>
-;;; Copyright © 2023 Sarthak Shah <shahsarthakw@gmail.com>
+;;; Copyright © 2023 Sarthak Shah <shahsarthakw@gmail.com> ; g23
 ;;;
 ;;; This file is part of GNU Guix.
 ;;;
@@ -50,6 +50,7 @@
   #:use-module (guix derivations)
   #:use-module (guix build-system)
   #:use-module (guix serialization)
+  #:use-module (guix parameters) ; g23
   #:use-module ((guix licenses)
                 #:select (license? license-name license-uri))
   #:use-module ((guix build syscalls)
@@ -64,7 +65,6 @@
                 #:hide (package-name->name+version
                         ;; Avoid "overrides core binding" warning.
                         delete))
-  #:use-module (guix parameters) ; g23
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9 gnu)
   #:use-module (srfi srfi-11)
