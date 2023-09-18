@@ -1,5 +1,6 @@
 # Parameterized Packages for Guix
 This repository contains the work I'm doing on parameterized packages for GSoC 2023.
+**I am not actively syncing this mirror, please go to the [main repository](https://notabug.org/cel7t/guix-parameters) for the most up-to-date version.**
 ```
 .
 ├── GUIX : Source code for GNU Guix with my changes
